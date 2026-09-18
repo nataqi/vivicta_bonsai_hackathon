@@ -1,0 +1,33 @@
+import os
+
+from deepgram import DeepgramClient
+from dotenv import load_dotenv
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+
+load_dotenv()
+
+app = FastAPI(title="AI Compassion Coach API")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:3001"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+deepgram = DeepgramClient(
+    api_key=os.environ["DEEPGRAM_API_KEY"],
+)
+
+
+@app.get("/health")
+async def health():
+    return {"status": "ok"}
+
+
+@app.get("/deepgram/health")
+def deepgram_health():
+    deepgram.manage.v1.projects.list()
+    return {"status": "ok"}
