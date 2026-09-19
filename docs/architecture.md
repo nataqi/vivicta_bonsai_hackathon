@@ -110,11 +110,13 @@ Non-selected areas are still monitored.
 
 A very clear issue in a non-selected area may still trigger a live nudge.
 
-The adviser confirms or changes their active focus when starting a meeting.
+The adviser selects or changes their active focus areas on the Home / Progress screen.
+
+When the adviser selects Start Meeting, those active focus areas are used directly for the session.
 
 Saved focus areas may carry over between sessions.
 
-There is no separate pre-meeting workflow.
+There is no separate pre-meeting focus-confirmation workflow.
 
 ---
 
@@ -516,7 +518,7 @@ The AI may use it internally to refer to relevant moments.
 A typical reflection may follow:
 
 1. Ask how the adviser thinks the meeting went.
-2. Let the adviser answer freely or choose a simple response.
+2. Let the adviser answer freely using the text input.
 3. Respond using observations from the meeting.
 4. Help identify one useful takeaway or improvement intention.
 
@@ -691,8 +693,8 @@ The Home screen represents the adviser's longer-term coaching journey.
 It should show lightweight information such as:
 
 - current coaching focus
-- recent strengths
-- recurring patterns
+- recent progress
+- recurring strengths
 - areas being worked on
 - qualitative improvement over time
 - Start Meeting
@@ -721,14 +723,11 @@ Avoid complex charts and numeric performance scores unless there is a clear futu
 
 ## Meeting
 
-Before starting:
-
-- show current coaching focus
-- allow adviser to confirm or change it
-- Start Meeting
+The adviser starts the meeting directly from Home / Progress using the focus areas already selected there.
 
 During the meeting:
 
+- show the active focus areas in a lightweight, read-only way
 - listen to live microphone audio
 - transcribe conversation
 - analyze all five coaching dimensions
