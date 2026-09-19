@@ -1,26 +1,37 @@
-# AGENTS.md
+# AI Compassion Coach
 
-## Project
+Hackathon prototype of an AI coaching assistant for customer-facing financial advisers.
 
-This repository contains a hackathon prototype of an AI coaching assistant for
-customer-facing financial advisers.
+The system helps advisers improve how they communicate during difficult or emotionally sensitive customer conversations through:
 
-The goal is to help advisers improve how they communicate during difficult or
-emotionally sensitive customer conversations.
+- lightweight live coaching nudges
+- concise post-meeting feedback
+- short reflection
+- adviser learning that carries across meetings
 
-This is a coaching tool, not a knowledge assistant. It focuses on how the
-adviser interacts with the customer rather than providing financial answers.
+The core principle is:
 
-## Product loop
+> Remember the learning, forget the customer conversation.
 
-1. Adviser selects their coaching focus on Home and starts the customer meeting.
-2. The system observes the conversation.
-3. It stays mostly silent and shows short live nudges only when useful.
-4. After the meeting, the adviser receives a short coaching report.
-5. The adviser may complete a brief reflection conversation with the AI coach.
-6. Generic adviser learning is retained to support improvement across meetings.
+## Product Flow
 
-## Coaching dimensions
+```text
+Home / Progress
+      ↓
+Live Meeting + Coaching Nudges
+      ↓
+Post-meeting Report
+      ↓
+Optional Reflection
+      ↓
+Updated Adviser Learning
+```
+
+The adviser selects their coaching focus on Home / Progress. Starting a meeting uses those selected focus areas directly.
+
+The product focuses on coaching the adviser rather than analysing or profiling the customer.
+
+## Coaching Dimensions
 
 The MVP uses five coaching dimensions:
 
@@ -30,65 +41,251 @@ The MVP uses five coaching dimensions:
 4. Acknowledging emotional cues
 5. Stay with the customer before solving
 
-All analysis and coaching should map back to these dimensions.
+These are qualitative coaching dimensions, not numeric performance scores.
 
-## Product principles
+## Tech Stack
 
-- Coach the adviser, not the customer.
-- Prefer self-awareness over judgment.
-- Keep live intervention minimal.
-- Do not use numeric empathy scores.
-- Live nudges should be short, predefined, and actionable.
-- The adviser remains in control of their coaching focus.
-- Post-meeting reflection should be short and useful rather than a long chat.
-- Detailed coaching data belongs to the adviser, not managers or HR.
+### Frontend
 
-## Privacy
+- React
+- Next.js
+- TypeScript
+- Tailwind CSS
 
-Follow the principle:
+### Backend
 
-> Remember the learning, forget the customer conversation.
+- Python
+- FastAPI
+- WebSockets
 
-Audio, transcripts, rolling context, customer identifiers, customer-specific
-details, and exact customer moments are temporary session data.
+### Services
 
-They may be used during the meeting and immediate post-meeting reflection but
-must not become long-term coaching memory.
+- Deepgram — streaming speech-to-text and speaker diarization
+- OpenAI — semantic analysis and coaching
+- Supabase / PostgreSQL — persistent adviser learning
 
-Persistent data should contain only generic adviser learning such as:
+See [`docs/tech-stack.md`](docs/tech-stack.md) for details.
 
-- focus areas
-- strengths
-- recurring patterns
-- improvement areas
-- reflection takeaways
-- progress over time
+## Repository Structure
 
-## MVP
+```text
+/
+├── AGENTS.md
+├── README.md
+├── docs/
+│   ├── architecture.md
+│   ├── tech-stack.md
+│   └── ui-guidelines.md
+├── frontend/
+│   └── src/
+│       ├── app/
+│       │   └── mockup/
+│       ├── components/
+│       │   └── mockup/
+│       └── lib/
+│           └── mockup/
+└── backend/
+    └── app/
+```
 
-The prototype should support:
+## Documentation
+
+### [`AGENTS.md`](AGENTS.md)
+
+Context and instructions for AI coding agents.
+
+Contains:
+
+- hackathon context
+- product idea
+- coaching principles
+- privacy constraints
+- MVP boundaries
+- implementation guidelines
+
+### [`docs/architecture.md`](docs/architecture.md)
+
+Source of truth for system design.
+
+Contains:
+
+- end-to-end architecture
+- live meeting flow
+- behavioral and semantic analysis
+- rolling context
+- nudge logic
+- post-meeting analysis
+- reflection
+- persistent adviser learning
+- data lifecycle
+- product screens
+- MVP boundaries
+
+### [`docs/tech-stack.md`](docs/tech-stack.md)
+
+Source of truth for technology choices.
+
+Contains:
+
+- frontend stack
+- FastAPI backend
+- Deepgram
+- OpenAI
+- Supabase / PostgreSQL
+- temporary session state
+- localhost development
+- optional prosody stretch goal
+
+### [`docs/ui-guidelines.md`](docs/ui-guidelines.md)
+
+Visual and interaction guidelines.
+
+Contains:
+
+- light and projector-friendly visual direction
+- color usage
+- layout principles
+- coaching UI principles
+- readability requirements
+- guidance for avoiding surveillance-style or dashboard-heavy design
+
+## Frontend Mockup
+
+A frontend-only clickable mockup is available under:
+
+```text
+/mockup
+```
+
+The mockup demonstrates:
+
+- Home / Progress
+- coaching focus selection
+- live meeting state
+- sample coaching nudges
+- post-meeting report
+- short reflection experience
+- return to Home
+
+The adviser selects coaching focus areas on Home / Progress before starting a meeting.
+
+The reflection experience uses free-text conversation rather than predefined response options.
+
+The mockup uses frontend-only mock data and does not call the real backend, Deepgram, OpenAI, or Supabase.
+
+Mockup-specific code is intentionally isolated under:
+
+```text
+frontend/src/app/mockup/
+frontend/src/components/mockup/
+frontend/src/lib/mockup/
+```
+
+This allows the mockup to be changed or removed without affecting the future real implementation.
+
+## Local Development
+
+### Frontend
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+The frontend will normally run on:
+
+```text
+http://localhost:3000
+```
+
+If that port is already occupied, Next.js may automatically use another port such as `3001`.
+
+The mockup is then available at:
+
+```text
+http://localhost:<frontend-port>/mockup
+```
+
+### Backend
+
+```bash
+cd backend
+source .venv/bin/activate
+uvicorn app.main:app --reload --port 8001
+```
+
+Backend health check:
+
+```text
+http://localhost:8001/health
+```
+
+Deepgram authentication check:
+
+```text
+http://localhost:8001/deepgram/health
+```
+
+## Environment Variables
+
+Backend credentials are stored locally in:
+
+```text
+backend/.env
+```
+
+Current services may require:
+
+```text
+DEEPGRAM_API_KEY=
+OPENAI_API_KEY=
+SUPABASE_URL=
+SUPABASE_KEY=
+```
+
+Not all integrations are implemented yet.
+
+Do not commit secrets or `.env` files to Git.
+
+## MVP Direction
+
+The intended real MVP will eventually support:
 
 - real microphone input
-- streaming transcription with speaker separation
+- streaming transcription
+- speaker separation
 - behavioral signal detection
 - semantic conversation analysis
 - selective live coaching nudges
 - post-meeting coaching report
-- short optional reflection chat
-- persistent adviser learning across sessions
-- lightweight home/progress view
+- short free-text reflection chat
+- adviser learning across sessions
+- lightweight Home / Progress experience
 
-Do not add unnecessary production infrastructure or enterprise features.
+The current frontend mockup is for product discussion and UX validation before implementing the complete system.
 
-Prosody / voice-emotion analysis is a stretch goal only.
+## Development Principles
 
-## Working guidelines
+- Keep the project proportional to a hackathon.
+- Prefer simple end-to-end vertical slices over large all-at-once implementation.
+- Keep application logic primarily in the FastAPI backend.
+- Keep the frontend focused on interaction and presentation.
+- Use deterministic logic where possible.
+- Use AI where conversational meaning and context are required.
+- Keep customer conversation data temporary.
+- Persist adviser learning, not customer conversation history.
+- Keep documentation minimal and update existing documents instead of creating unnecessary new files.
+- Make the local end-to-end experience reliable before spending time on deployment or stretch goals.
 
-- Keep implementation proportional to a hackathon prototype.
-- Prefer simple, explicit solutions over abstraction-heavy architecture.
-- Do not introduce dependencies without a clear need.
-- Keep documentation minimal and update existing documents instead of creating
-  new documentation files unnecessarily.
-- Treat `docs/architecture.md` as the source of truth for system design.
-- Treat `docs/tech-stack.md` as the source of truth for technology choices.
-- Keep customer conversation data temporary by design.
+## Status
+
+Hackathon MVP under active development.
+
+Current state:
+
+- product concept and architecture defined
+- documentation baseline established
+- frontend mockup available for team discussion
+- initial backend and Deepgram setup completed
+- real product implementation will be developed in vertical slices after team alignment
