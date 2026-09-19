@@ -13,7 +13,7 @@ adviser interacts with the customer rather than providing financial answers.
 
 ## Product loop
 
-1. Adviser starts a customer meeting and confirms their coaching focus.
+1. Adviser selects their coaching focus on Home and starts the customer meeting.
 2. The system observes the conversation.
 3. It stays mostly silent and shows short live nudges only when useful.
 4. After the meeting, the adviser receives a short coaching report.
