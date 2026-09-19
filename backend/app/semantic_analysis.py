@@ -1,6 +1,5 @@
 import asyncio
 import json
-import os
 from typing import Literal
 
 from openai import OpenAI
@@ -14,8 +13,15 @@ from app.coaching import (
     EventType,
     NudgeKey,
 )
+from app.openrouter import (
+    OPENROUTER_BASE_URL,
+    OPENROUTER_MODEL,
+    OPENROUTER_STRUCTURED_PROVIDER,
+    openrouter_api_key,
+    structured_response_format,
+)
 
-MODEL = "gpt-5.6-luna"
+MODEL = OPENROUTER_MODEL
 
 INSTRUCTIONS = """You classify live conversation coaching events for a financial adviser.
 Coach only the adviser. Return only schema-valid structured output. Never generate coaching prose.
@@ -74,17 +80,24 @@ CANONICAL_EVENT_FIELDS: dict[EventType, tuple[CoachingArea, NudgeKey | None]] = 
 }
 
 
-class OpenAISemanticAnalyzer:
+class OpenRouterSemanticAnalyzer:
     def __init__(self, client: OpenAI, timeout_seconds: float = 4.0) -> None:
         self.client = client
         self.timeout_seconds = timeout_seconds
 
     @classmethod
-    def from_environment(cls) -> "OpenAISemanticAnalyzer | None":
-        api_key = os.getenv("OPENAI_API_KEY")
+    def from_environment(cls) -> "OpenRouterSemanticAnalyzer | None":
+        api_key = openrouter_api_key()
         if not api_key:
             return None
-        return cls(OpenAI(api_key=api_key, timeout=4.0, max_retries=0))
+        return cls(
+            OpenAI(
+                api_key=api_key,
+                base_url=OPENROUTER_BASE_URL,
+                timeout=4.0,
+                max_retries=0,
+            )
+        )
 
     async def analyze(self, snapshot: ContextSnapshot) -> tuple[str, list[DetectedEvent]]:
         return await asyncio.wait_for(
@@ -93,18 +106,23 @@ class OpenAISemanticAnalyzer:
         )
 
     def _analyze_sync(self, snapshot: ContextSnapshot) -> tuple[str, list[DetectedEvent]]:
-        response = self.client.responses.parse(
+        response = self.client.chat.completions.create(
             model=MODEL,
-            reasoning={"effort": "none"},
-            instructions=INSTRUCTIONS,
-            input=json.dumps(self._payload(snapshot), separators=(",", ":")),
-            text_format=SemanticAnalysisResult,
-            max_output_tokens=500,
-            store=False,
+            messages=[
+                {"role": "system", "content": INSTRUCTIONS},
+                {
+                    "role": "user",
+                    "content": json.dumps(self._payload(snapshot), separators=(",", ":")),
+                },
+            ],
+            response_format=structured_response_format(SemanticAnalysisResult),
+            max_tokens=500,
+            extra_body=OPENROUTER_STRUCTURED_PROVIDER,
         )
-        parsed = response.output_parsed
-        if parsed is None:
+        content = response.choices[0].message.content
+        if not content:
             return snapshot.summary, []
+        parsed = SemanticAnalysisResult.model_validate_json(content)
         turns_by_id = {str(turn["id"]): turn for turn in snapshot.turns}
         events: list[DetectedEvent] = []
         for candidate in parsed.events:

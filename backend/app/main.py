@@ -6,6 +6,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.transcription import router as transcription_router
+from app.post_meeting import router as post_meeting_router
 
 load_dotenv()
 
@@ -20,6 +21,7 @@ app.add_middleware(
 )
 
 app.include_router(transcription_router)
+app.include_router(post_meeting_router)
 
 deepgram = DeepgramClient(
     api_key=os.environ["DEEPGRAM_API_KEY"],

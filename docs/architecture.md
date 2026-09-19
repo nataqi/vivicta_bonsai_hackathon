@@ -41,7 +41,7 @@ Speaker-labelled finalized turns + timestamps
  │ - long monologues    │                        │
  └──────────┬───────────┴───────────┬────────────┘
             ↓                       ↓
-     Rule-based events       OpenAI semantic analysis
+     Rule-based events       OpenRouter/Gemini semantic analysis
             ↓                       ↓
       confidence rules       semantic events + confidence
             └───────────┬───────────┘
@@ -60,7 +60,7 @@ Temporary transcript
 + nudges shown
 + selected coaching focus
         ↓
-OpenAI post-meeting analysis
+OpenRouter/Gemini post-meeting analysis
         ↓
 Structured analysis across
 the five coaching dimensions
@@ -228,7 +228,9 @@ For example:
 
 # Semantic Analysis
 
-Semantic analysis is handled by an OpenAI model.
+Semantic analysis is handled through OpenRouter using `google/gemini-2.5-flash`.
+OpenRouter is an additional processor/router for temporary conversation data; the
+application keeps this data in memory only and does not intentionally persist it.
 
 The LLM should focus on signals requiring meaning and conversational context rather than deterministic measurements.
 
@@ -766,7 +768,7 @@ The MVP should use:
 - real Deepgram streaming transcription
 - real speaker separation
 - real behavioral measurements
-- real OpenAI semantic analysis
+- real OpenRouter/Gemini semantic analysis
 - real live nudge decisions
 - real predefined live nudges
 - real post-meeting analysis
@@ -835,7 +837,7 @@ Application code
 → nudge decision logic
 → predefined nudge library
 
-OpenAI
+OpenRouter / Gemini
 → semantic event analysis
 → post-meeting analysis
 → reflection coaching

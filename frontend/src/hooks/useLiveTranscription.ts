@@ -39,8 +39,8 @@ export type TranscriptionStatus =
   | "error";
 
 type ServerMessage =
-  | { type: "session.ready" }
-  | { type: "session.stopped" }
+  | { type: "session.ready"; sessionId: string }
+  | { type: "session.stopped"; sessionId: string }
   | { type: "speaker_turn"; turn: SpeakerTurn }
   | { type: "live_nudge"; nudge: LiveNudge }
   | { type: "error"; message: string };
@@ -74,6 +74,7 @@ export function useLiveTranscription() {
   const [status, setStatus] = useState<TranscriptionStatus>("idle");
   const [turns, setTurns] = useState<SpeakerTurn[]>([]);
   const [sessionTurns, setSessionTurns] = useState<SpeakerTurn[]>([]);
+  const [completedSessionId, setCompletedSessionId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [currentNudge, setCurrentNudge] = useState<LiveNudge | null>(null);
 
@@ -135,6 +136,7 @@ export function useLiveTranscription() {
 
     clearLiveContent();
     setSessionTurns([]);
+    setCompletedSessionId(null);
     setError(null);
     setStatus("requesting");
 
@@ -268,10 +270,15 @@ export function useLiveTranscription() {
       }
 
       if (message.type === "session.stopped") {
+        if (typeof message.sessionId !== "string" || !message.sessionId) {
+          fail("The completed meeting did not return a session identifier.");
+          return;
+        }
         expectedCloseRef.current = true;
         acceptSessionTurnsRef.current = false;
         disposeSession();
         clearLiveContent();
+        setCompletedSessionId(message.sessionId);
         setStatus("stopped");
         return;
       }
@@ -297,6 +304,13 @@ export function useLiveTranscription() {
       }
     };
   }, [clearLiveContent, disposeSession]);
+
+  const clearCompletedSession = useCallback(() => {
+    setSessionTurns([]);
+    setCompletedSessionId(null);
+    setError(null);
+    clearLiveContent();
+  }, [clearLiveContent]);
 
   const stop = useCallback(() => {
     const recorder = recorderRef.current;
@@ -370,10 +384,12 @@ export function useLiveTranscription() {
     status,
     turns,
     sessionTurns,
+    completedSessionId,
     error,
     currentNudge,
     start,
     stop,
+    clearCompletedSession,
     isActive:
       status === "requesting" ||
       status === "connecting" ||

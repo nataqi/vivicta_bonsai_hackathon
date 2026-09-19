@@ -1,5 +1,6 @@
 import unittest
 from types import SimpleNamespace
+from unittest.mock import patch
 
 from app.coaching import (
     CoachingArea,
@@ -9,17 +10,19 @@ from app.coaching import (
     NudgeDecider,
     NudgeKey,
 )
-from app.semantic_analysis import OpenAISemanticAnalyzer, SemanticAnalysisResult
+from app.openrouter import OPENROUTER_BASE_URL, OPENROUTER_MODEL
+from app.semantic_analysis import OpenRouterSemanticAnalyzer, SemanticAnalysisResult
 
 
-class FakeResponses:
+class FakeCompletions:
     def __init__(self, parsed: SemanticAnalysisResult | None) -> None:
         self.parsed = parsed
         self.kwargs = None
 
-    def parse(self, **kwargs):
+    def create(self, **kwargs):
         self.kwargs = kwargs
-        return SimpleNamespace(output_parsed=self.parsed)
+        content = self.parsed.model_dump_json() if self.parsed is not None else None
+        return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=content))])
 
 
 def turn(turn_id: str, speaker: str, text: str, start_ms: int, end_ms: int):
@@ -48,10 +51,12 @@ class SemanticAnalysisTests(unittest.TestCase):
         )
 
     def analyze(self, parsed, snapshot=None):
-        responses = FakeResponses(parsed)
-        analyzer = OpenAISemanticAnalyzer(SimpleNamespace(responses=responses))
+        completions = FakeCompletions(parsed)
+        analyzer = OpenRouterSemanticAnalyzer(
+            SimpleNamespace(chat=SimpleNamespace(completions=completions))
+        )
         summary, events = analyzer._analyze_sync(snapshot or self.snapshot())
-        return summary, events, responses
+        return summary, events, completions
 
     def test_structured_result_is_converted_and_timestamped(self) -> None:
         parsed = self.result(
@@ -66,11 +71,30 @@ class SemanticAnalysisTests(unittest.TestCase):
                 }
             ]
         )
-        summary, events, responses = self.analyze(parsed)
+        summary, events, completions = self.analyze(parsed)
         self.assertEqual(summary, "The customer shared a concern.")
         self.assertEqual(events[0].timestamp_ms, 4_000)
-        self.assertFalse(responses.kwargs["store"])
-        self.assertEqual(responses.kwargs["reasoning"], {"effort": "none"})
+        self.assertEqual(completions.kwargs["model"], OPENROUTER_MODEL)
+        self.assertEqual(completions.kwargs["max_tokens"], 500)
+        self.assertEqual(completions.kwargs["extra_body"], {"provider": {"require_parameters": True}})
+        self.assertEqual(completions.kwargs["response_format"]["type"], "json_schema")
+
+    def test_client_uses_openrouter_key_and_never_falls_back_to_openai(self) -> None:
+        with patch.dict(
+            "os.environ",
+            {"OPENROUTER_API_KEY": "router-key", "OPENAI_API_KEY": "personal-key"},
+            clear=True,
+        ), patch("app.semantic_analysis.OpenAI") as client:
+            OpenRouterSemanticAnalyzer.from_environment()
+        client.assert_called_once_with(
+            api_key="router-key",
+            base_url=OPENROUTER_BASE_URL,
+            timeout=4.0,
+            max_retries=0,
+        )
+
+        with patch.dict("os.environ", {"OPENAI_API_KEY": "personal-key"}, clear=True):
+            self.assertIsNone(OpenRouterSemanticAnalyzer.from_environment())
 
     def test_customer_cue_uses_customer_evidence_and_has_no_nudge_key(self) -> None:
         parsed = self.result(

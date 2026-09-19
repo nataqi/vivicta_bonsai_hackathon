@@ -12,6 +12,7 @@ from app.coaching import (
     TurnObservation,
 )
 from app.transcription import SpeakerTurnAssembler, emit_coached_observation
+from app.post_meeting import store as post_meeting_store
 
 
 def word(
@@ -261,6 +262,25 @@ class CoachedObservationIntegrationTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual([message["type"] for message in messages], ["speaker_turn", "speaker_turn"])
         await new_session.close()
+
+
+class CompletedSnapshotIntegrationTests(unittest.IsolatedAsyncioTestCase):
+    async def test_final_flushed_turn_is_registered_in_completed_snapshot(self) -> None:
+        assembler = SpeakerTurnAssembler()
+        observations = assembler.consume_observations(
+            result(
+                [word("last", 3.0, 3.3, 0), word("phrase", 3.3, 3.8, 0)],
+                from_finalize=True,
+            )
+        )
+        coaching = CoachingSession()
+        for observation in observations:
+            coaching.observe(observation)
+        frozen = await coaching.freeze()
+        session = post_meeting_store.register("final-flush-test", frozen)
+
+        self.assertEqual(session.snapshot.turns[0]["text"], "last phrase")
+        post_meeting_store.delete("final-flush-test")
 
 
 if __name__ == "__main__":

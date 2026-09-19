@@ -11,7 +11,8 @@ from deepgram.listen.v1.types.listen_v1results import ListenV1Results
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from app.coaching import CoachingSession, LiveNudge, TimedWord, TurnObservation
-from app.semantic_analysis import OpenAISemanticAnalyzer
+from app.post_meeting import store as post_meeting_store
+from app.semantic_analysis import OpenRouterSemanticAnalyzer
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -145,8 +146,9 @@ async def emit_coached_observation(
 @router.websocket("/ws/transcription")
 async def transcription_websocket(websocket: WebSocket) -> None:
     await websocket.accept()
+    session_id = str(uuid4())
     assembler = SpeakerTurnAssembler()
-    coaching = CoachingSession(OpenAISemanticAnalyzer.from_environment())
+    coaching = CoachingSession(OpenRouterSemanticAnalyzer.from_environment())
     browser_task: asyncio.Task[str] | None = None
     deepgram_task: asyncio.Task[None] | None = None
     send_lock = asyncio.Lock()
@@ -211,7 +213,7 @@ async def transcription_websocket(websocket: WebSocket) -> None:
                     if result.from_finalize:
                         finalized.set()
 
-            await send({"type": "session.ready"})
+            await send({"type": "session.ready", "sessionId": session_id})
             browser_task = asyncio.create_task(receive_browser_audio())
             deepgram_task = asyncio.create_task(receive_deepgram_results())
 
@@ -242,7 +244,9 @@ async def transcription_websocket(websocket: WebSocket) -> None:
 
                 for observation in assembler.flush_observations():
                     await emit_coached_observation(observation, coaching, send)
-                await send({"type": "session.stopped"})
+                completed_data = await coaching.freeze()
+                post_meeting_store.register(session_id, completed_data)
+                await send({"type": "session.stopped", "sessionId": session_id})
             else:
                 await connection.send_finalize()
                 await connection.send_close_stream()

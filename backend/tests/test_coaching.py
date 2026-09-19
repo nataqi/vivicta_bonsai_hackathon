@@ -189,7 +189,7 @@ class RollingContextTests(unittest.TestCase):
         self.assertLessEqual(sum(len(str(turn["text"])) for turn in context.turns), 1_200)
 
     def test_expired_events_are_excluded_from_snapshot_and_semantic_payload(self) -> None:
-        from app.semantic_analysis import OpenAISemanticAnalyzer
+        from app.semantic_analysis import OpenRouterSemanticAnalyzer
 
         context = RollingContext()
         context.add_turn(observation("advisor", 0, 1_000, turn_id="a1").turn)
@@ -199,7 +199,7 @@ class RollingContextTests(unittest.TestCase):
         context.add_turn(observation("advisor", 129_000, 130_000, turn_id="a2").turn)
 
         snapshot = context.snapshot()
-        payload = OpenAISemanticAnalyzer._payload(snapshot)
+        payload = OpenRouterSemanticAnalyzer._payload(snapshot)
 
         self.assertEqual(snapshot.events, (recent,))
         self.assertEqual(

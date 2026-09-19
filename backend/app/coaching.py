@@ -113,6 +113,16 @@ class ContextSnapshot:
     summary: str
 
 
+@dataclass(frozen=True)
+class CompletedMeetingData:
+    """Immutable meeting-scoped data handed to the post-meeting flow."""
+
+    turns: tuple[dict[str, object], ...]
+    selected_focus: tuple[CoachingArea, ...]
+    events: tuple[DetectedEvent, ...]
+    nudges: tuple[LiveNudge, ...]
+
+
 class SemanticAnalyzer(Protocol):
     async def analyze(self, snapshot: ContextSnapshot) -> tuple[str, list[DetectedEvent]]: ...
 
@@ -324,6 +334,9 @@ class CoachingSession:
         self._pending: ContextSnapshot | None = None
         self._worker: asyncio.Task[None] | None = None
         self._closed = False
+        self._meeting_turns: list[dict[str, object]] = []
+        self._meeting_events: list[DetectedEvent] = []
+        self._meeting_nudges: list[LiveNudge] = []
 
     def set_focus(self, values: list[str]) -> None:
         self.context.selected_focus = {
@@ -331,12 +344,17 @@ class CoachingSession:
         }
 
     def observe(self, observation: TurnObservation) -> LiveNudge | None:
+        if self._closed:
+            return None
+        self._meeting_turns.append(dict(observation.turn))
         self.context.add_turn(observation.turn)
         events = self.behavior.analyze(observation)
+        self._meeting_events.extend(events)
         self.context.add_events(events)
         nudge = self.decider.decide(events, self.context.selected_focus)
         if nudge:
             self.context.nudges.append(nudge)
+            self._meeting_nudges.append(nudge)
         return nudge
 
     def schedule_semantic(
@@ -364,11 +382,26 @@ class CoachingSession:
             if self.context.version - snapshot.version > 1:
                 continue
             self.context.summary = summary[:300]
+            self._meeting_events.extend(events)
             self.context.add_events(events)
             nudge = self.decider.decide(events, self.context.selected_focus)
             if nudge:
                 self.context.nudges.append(nudge)
+                self._meeting_nudges.append(nudge)
                 await on_nudge(nudge)
+
+    async def freeze(self) -> CompletedMeetingData:
+        """Close live work, then return a detached immutable meeting snapshot."""
+
+        await self.close()
+        return CompletedMeetingData(
+            turns=tuple(dict(turn) for turn in self._meeting_turns),
+            selected_focus=tuple(
+                sorted(self.context.selected_focus, key=lambda area: area.value)
+            ),
+            events=tuple(self._meeting_events),
+            nudges=tuple(self._meeting_nudges),
+        )
 
     async def close(self) -> None:
         self._closed = True

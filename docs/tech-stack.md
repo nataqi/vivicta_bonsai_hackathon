@@ -145,9 +145,16 @@ The MVP should not integrate both unless necessary.
 
 ## AI / LLM
 
-### OpenAI
+### OpenRouter / Google Gemini
 
-OpenAI models are used for semantic analysis and coaching.
+Application LLM access uses OpenRouter with `google/gemini-2.5-flash` for live
+semantic analysis, post-meeting reports, and reflection. The backend uses
+OpenRouter's OpenAI-compatible Chat Completions API with strict JSON Schema
+structured outputs.
+
+OpenRouter is an additional processor/router for temporary conversation data.
+The application keeps customer conversation data in temporary in-memory session
+state and does not intentionally persist it.
 
 Main responsibilities:
 
@@ -244,7 +251,7 @@ FastAPI development server
 
 External services:
 Deepgram
-OpenAI
+OpenRouter / Google Gemini
 Supabase
 ```
 
@@ -291,7 +298,7 @@ Speech-to-Text
 - AssemblyAI as fallback only
 
 AI
-- OpenAI
+- OpenRouter / Google Gemini
 
 Persistent Storage
 - Supabase
