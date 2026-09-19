@@ -60,6 +60,8 @@ EVENT_NUDGES = {
     EventType.PREMATURE_PROBLEM_SOLVING: NudgeKey.STAY_BEFORE_SOLVING,
 }
 
+RELEVANCE_WINDOW_MS = 120_000
+
 
 @dataclass(frozen=True)
 class TimedWord:
@@ -134,14 +136,16 @@ class BehavioralAnalyzer:
         self._talk_time.append(
             (int(turn["startTimeMs"]), end_ms, str(speaker), active_speech_ms)
         )
-        while self._talk_time and end_ms - self._talk_time[0][1] > 120_000:
+        while self._talk_time and end_ms - self._talk_time[0][1] > RELEVANCE_WINDOW_MS:
             self._talk_time.popleft()
 
         if speaker == "advisor" and observation.words:
-            speech_ms = active_speech_ms
-            if speech_ms > 0:
-                wpm = len(observation.words) * 60_000 / speech_ms
-                span_ms = int(turn["durationMs"])
+            span_ms = (
+                max(word.end_time_ms for word in observation.words)
+                - min(word.start_time_ms for word in observation.words)
+            )
+            if span_ms > 0:
+                wpm = len(observation.words) * 60_000 / span_ms
                 if wpm >= 175 and span_ms >= 15_000:
                     confidence = Confidence.HIGH
                 elif wpm >= 175 and span_ms >= 10_000:
@@ -207,7 +211,10 @@ class BehavioralAnalyzer:
             overlap_ms = -gap_ms
             if overlap_ms >= 300:
                 self._interruptions.append(end_ms)
-                while self._interruptions and end_ms - self._interruptions[0] > 120_000:
+                while (
+                    self._interruptions
+                    and end_ms - self._interruptions[0] > RELEVANCE_WINDOW_MS
+                ):
                     self._interruptions.popleft()
                 events.append(
                     DetectedEvent(
@@ -238,8 +245,26 @@ class RollingContext:
         while sum(len(str(item["text"])) for item in self.turns) > 1_200:
             self.turns.popleft()
         self.version += 1
+        self._prune_events(int(turn["endTimeMs"]))
+
+    def add_events(self, events: list[DetectedEvent]) -> None:
+        self.events.extend(events)
+        if self.turns:
+            self._prune_events(int(self.turns[-1]["endTimeMs"]))
+
+    def _prune_events(self, now_ms: int) -> None:
+        self.events = deque(
+            (
+                event
+                for event in self.events
+                if now_ms - event.timestamp_ms <= RELEVANCE_WINDOW_MS
+            ),
+            maxlen=8,
+        )
 
     def snapshot(self) -> ContextSnapshot:
+        if self.turns:
+            self._prune_events(int(self.turns[-1]["endTimeMs"]))
         return ContextSnapshot(
             self.version,
             tuple(self.turns),
@@ -308,7 +333,7 @@ class CoachingSession:
     def observe(self, observation: TurnObservation) -> LiveNudge | None:
         self.context.add_turn(observation.turn)
         events = self.behavior.analyze(observation)
-        self.context.events.extend(events)
+        self.context.add_events(events)
         nudge = self.decider.decide(events, self.context.selected_focus)
         if nudge:
             self.context.nudges.append(nudge)
@@ -336,10 +361,10 @@ class CoachingSession:
                 continue
             if self._closed:
                 return
-            self.context.summary = summary[:300]
-            self.context.events.extend(events)
             if self.context.version - snapshot.version > 1:
                 continue
+            self.context.summary = summary[:300]
+            self.context.add_events(events)
             nudge = self.decider.decide(events, self.context.selected_focus)
             if nudge:
                 self.context.nudges.append(nudge)

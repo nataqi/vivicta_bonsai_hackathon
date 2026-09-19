@@ -25,17 +25,19 @@ def observation(
     turn_id: str,
     word_count: int = 4,
     text: str | None = None,
+    words: tuple[TimedWord, ...] | None = None,
 ) -> TurnObservation:
     duration = max(1, end_ms - start_ms)
-    word_duration = max(1, duration // word_count)
-    words = tuple(
-        TimedWord(
-            f"word{index}",
-            start_ms + index * word_duration,
-            min(end_ms, start_ms + (index + 1) * word_duration),
+    if words is None:
+        word_duration = max(1, duration // word_count)
+        words = tuple(
+            TimedWord(
+                f"word{index}",
+                start_ms + index * word_duration,
+                min(end_ms, start_ms + (index + 1) * word_duration),
+            )
+            for index in range(word_count)
         )
-        for index in range(word_count)
-    )
     return TurnObservation(
         {
             "id": turn_id,
@@ -69,6 +71,23 @@ class BehavioralAnalyzerTests(unittest.TestCase):
         )
         pace = next(item for item in events if item.type == EventType.FAST_PACE)
         self.assertEqual(pace.confidence, Confidence.HIGH)
+
+    def test_pauses_keep_45_words_over_18_seconds_below_fast_pace_threshold(self) -> None:
+        words = tuple(
+            TimedWord(
+                f"word{index}",
+                round(index * 17_900 / 44),
+                round(index * 17_900 / 44) + 100,
+            )
+            for index in range(45)
+        )
+        wpm = len(words) * 60_000 / (words[-1].end_time_ms - words[0].start_time_ms)
+        events = BehavioralAnalyzer().analyze(
+            observation("advisor", 0, 18_000, turn_id="a1", words=words)
+        )
+
+        self.assertAlmostEqual(wpm, 150)
+        self.assertFalse(any(event.type == EventType.FAST_PACE for event in events))
 
     def test_short_customer_response_gap_is_supporting_evidence_only(self) -> None:
         analyzer = BehavioralAnalyzer()
@@ -169,6 +188,32 @@ class RollingContextTests(unittest.TestCase):
         self.assertLessEqual(len(context.turns), 8)
         self.assertLessEqual(sum(len(str(turn["text"])) for turn in context.turns), 1_200)
 
+    def test_expired_events_are_excluded_from_snapshot_and_semantic_payload(self) -> None:
+        from app.semantic_analysis import OpenAISemanticAnalyzer
+
+        context = RollingContext()
+        context.add_turn(observation("advisor", 0, 1_000, turn_id="a1").turn)
+        expired = event(EventType.MISSED_EMOTIONAL_CUE, 5_000)
+        recent = event(EventType.CLOSED_QUESTION_PATTERN, 15_000, area=CoachingArea.OPEN_QUESTIONS)
+        context.add_events([expired, recent])
+        context.add_turn(observation("advisor", 129_000, 130_000, turn_id="a2").turn)
+
+        snapshot = context.snapshot()
+        payload = OpenAISemanticAnalyzer._payload(snapshot)
+
+        self.assertEqual(snapshot.events, (recent,))
+        self.assertEqual(
+            payload["recentEvents"],
+            [
+                {
+                    "area": CoachingArea.OPEN_QUESTIONS.value,
+                    "type": EventType.CLOSED_QUESTION_PATTERN.value,
+                    "confidence": Confidence.HIGH.value,
+                    "timestampMs": 15_000,
+                }
+            ],
+        )
+
 
 class FakeAnalyzer:
     def __init__(self, results: list[tuple[str, list[DetectedEvent]]]) -> None:
@@ -196,6 +241,16 @@ class BlockingAnalyzer:
 class FailingAnalyzer:
     async def analyze(self, snapshot: ContextSnapshot) -> tuple[str, list[DetectedEvent]]:
         raise TimeoutError
+
+
+class StaleResultAnalyzer:
+    def __init__(self, result: DetectedEvent) -> None:
+        self.release = asyncio.Event()
+        self.result = result
+
+    async def analyze(self, snapshot: ContextSnapshot) -> tuple[str, list[DetectedEvent]]:
+        await self.release.wait()
+        return "stale summary", [self.result]
 
 
 class CoachingSessionTests(unittest.IsolatedAsyncioTestCase):
@@ -246,6 +301,25 @@ class CoachingSessionTests(unittest.IsolatedAsyncioTestCase):
         analyzer.release.set()
         await asyncio.sleep(0.01)
         self.assertEqual(analyzer.versions, [1, 3])
+        await session.close()
+
+    async def test_stale_semantic_result_does_not_mutate_context_or_nudge(self) -> None:
+        stale_event = event(EventType.MISSED_EMOTIONAL_CUE, 1_000)
+        analyzer = StaleResultAnalyzer(stale_event)
+        session = CoachingSession(analyzer)
+        nudges = []
+        session.context.summary = "current summary"
+        session.observe(observation("customer", 0, 1_000, turn_id="c1"))
+        session.schedule_semantic(lambda nudge: self._capture(nudges, nudge))
+        await asyncio.sleep(0)
+        session.observe(observation("advisor", 2_000, 3_000, turn_id="a1", word_count=1))
+        session.observe(observation("customer", 4_000, 5_000, turn_id="c2"))
+        analyzer.release.set()
+        await asyncio.sleep(0.01)
+
+        self.assertEqual(nudges, [])
+        self.assertEqual(session.context.summary, "current summary")
+        self.assertEqual(list(session.context.events), [])
         await session.close()
 
     @staticmethod

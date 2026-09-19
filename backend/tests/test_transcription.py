@@ -1,7 +1,17 @@
+import asyncio
 import unittest
 from types import SimpleNamespace
 
-from app.transcription import SpeakerTurnAssembler
+from app.coaching import (
+    CoachingArea,
+    CoachingSession,
+    Confidence,
+    DetectedEvent,
+    EventType,
+    TimedWord,
+    TurnObservation,
+)
+from app.transcription import SpeakerTurnAssembler, emit_coached_observation
 
 
 def word(
@@ -139,6 +149,118 @@ class SpeakerTurnAssemblerTests(unittest.TestCase):
 
         self.assertEqual(observations[0].words[0].start_time_ms, 1000)
         self.assertNotIn("words", observations[0].turn)
+
+
+def coaching_observation(
+    turn_id: str,
+    *,
+    word_count: int = 4,
+    start_ms: int = 0,
+    end_ms: int = 1_000,
+) -> TurnObservation:
+    word_duration = max(1, (end_ms - start_ms) // word_count)
+    words = tuple(
+        TimedWord(
+            f"word{index}",
+            start_ms + index * word_duration,
+            min(end_ms, start_ms + (index + 1) * word_duration),
+        )
+        for index in range(word_count)
+    )
+    return TurnObservation(
+        {
+            "id": turn_id,
+            "speaker": "advisor",
+            "text": " ".join(word.text for word in words),
+            "startTimeMs": start_ms,
+            "endTimeMs": end_ms,
+            "durationMs": end_ms - start_ms,
+            "isFinal": True,
+        },
+        words,
+    )
+
+
+class FailingSemanticAnalyzer:
+    async def analyze(self, snapshot):
+        raise TimeoutError
+
+
+class LateSemanticAnalyzer:
+    def __init__(self) -> None:
+        self.started = asyncio.Event()
+        self.release = asyncio.Event()
+
+    async def analyze(self, snapshot):
+        self.started.set()
+        try:
+            await self.release.wait()
+        except asyncio.CancelledError:
+            return "late", [
+                DetectedEvent(
+                    CoachingArea.ACKNOWLEDGING_EMOTIONAL_CUES,
+                    EventType.MISSED_EMOTIONAL_CUE,
+                    Confidence.HIGH,
+                    1_000,
+                    "late result",
+                )
+            ]
+        return "", []
+
+
+class CoachedObservationIntegrationTests(unittest.IsolatedAsyncioTestCase):
+    async def test_finalized_turn_emits_eligible_behavioral_live_nudge(self) -> None:
+        messages = []
+
+        async def send(payload):
+            messages.append(payload)
+            return True
+
+        session = CoachingSession()
+        await emit_coached_observation(
+            coaching_observation("a1", word_count=60, end_ms=18_000),
+            session,
+            send,
+        )
+
+        self.assertEqual([message["type"] for message in messages], ["speaker_turn", "live_nudge"])
+        self.assertEqual(messages[1]["nudge"]["nudgeKey"], "PACE_SLOW_DOWN")
+        await session.close()
+
+    async def test_semantic_failure_does_not_break_finalized_turn_delivery(self) -> None:
+        messages = []
+
+        async def send(payload):
+            messages.append(payload)
+            return True
+
+        session = CoachingSession(FailingSemanticAnalyzer())
+        await emit_coached_observation(coaching_observation("a1"), session, send)
+        await asyncio.sleep(0.01)
+
+        self.assertEqual([message["type"] for message in messages], ["speaker_turn"])
+        await session.close()
+
+    async def test_late_semantic_result_after_close_cannot_emit_into_new_session(self) -> None:
+        messages = []
+
+        async def send(payload):
+            messages.append(payload)
+            return True
+
+        analyzer = LateSemanticAnalyzer()
+        old_session = CoachingSession(analyzer)
+        await emit_coached_observation(coaching_observation("old"), old_session, send)
+        await analyzer.started.wait()
+        await old_session.close()
+
+        new_session = CoachingSession()
+        await emit_coached_observation(coaching_observation("new"), new_session, send)
+        analyzer.release.set()
+        await asyncio.sleep(0.01)
+
+        self.assertEqual([message["type"] for message in messages], ["speaker_turn", "speaker_turn"])
+        await new_session.close()
 
 
 if __name__ == "__main__":

@@ -249,6 +249,60 @@ class SemanticAnalysisTests(unittest.TestCase):
         _, events, _ = self.analyze(parsed, reversed_roles)
         self.assertEqual(events, [])
 
+    def test_response_event_cannot_skip_an_adviser_acknowledgement(self) -> None:
+        turns = (
+            turn("c1", "customer", "I am scared I might lose my house.", 0, 2_000),
+            turn("a1", "advisor", "That sounds frightening. What feels most urgent?", 2_500, 4_000),
+            turn("a2", "advisor", "What is the remaining mortgage balance?", 4_500, 6_000),
+        )
+        snapshot = self.snapshot(turns)
+        candidates = []
+        for event_type, area, nudge_key in (
+            (
+                EventType.MISSED_EMOTIONAL_CUE,
+                CoachingArea.ACKNOWLEDGING_EMOTIONAL_CUES,
+                NudgeKey.ACKNOWLEDGE_EMOTION,
+            ),
+            (
+                EventType.PREMATURE_PROBLEM_SOLVING,
+                CoachingArea.STAY_BEFORE_SOLVING,
+                NudgeKey.STAY_BEFORE_SOLVING,
+            ),
+        ):
+            candidates.append(
+                {
+                    "area": area,
+                    "type": event_type,
+                    "confidence": Confidence.HIGH,
+                    "evidence_turn_ids": ["c1", "a2"],
+                    "evidence": "A later adviser response was cited.",
+                    "nudge_key": nudge_key,
+                }
+            )
+
+        _, events, _ = self.analyze(self.result(candidates), snapshot)
+
+        self.assertEqual(events, [])
+
+    def test_immediate_adviser_response_evidence_is_accepted(self) -> None:
+        parsed = self.result(
+            [
+                {
+                    "area": CoachingArea.STAY_BEFORE_SOLVING,
+                    "type": EventType.PREMATURE_PROBLEM_SOLVING,
+                    "confidence": Confidence.HIGH,
+                    "evidence_turn_ids": ["c1", "a1"],
+                    "evidence": "The response moved directly into a solution.",
+                    "nudge_key": NudgeKey.STAY_BEFORE_SOLVING,
+                }
+            ]
+        )
+
+        _, events, _ = self.analyze(parsed)
+
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0].type, EventType.PREMATURE_PROBLEM_SOLVING)
+
     def test_closed_question_requires_advisor_evidence(self) -> None:
         parsed = self.result(
             [

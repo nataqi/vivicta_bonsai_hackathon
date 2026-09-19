@@ -118,7 +118,11 @@ class OpenAISemanticAnalyzer:
             ):
                 continue
             evidence_turns = [turns_by_id[turn_id] for turn_id in candidate.evidence_turn_ids]
-            if not self._has_valid_role_evidence(candidate.type, evidence_turns):
+            if not self._has_valid_role_evidence(
+                candidate.type,
+                evidence_turns,
+                snapshot.turns,
+            ):
                 continue
             events.append(
                 DetectedEvent(
@@ -137,6 +141,7 @@ class OpenAISemanticAnalyzer:
     def _has_valid_role_evidence(
         event_type: EventType,
         evidence_turns: list[dict[str, object]],
+        snapshot_turns: tuple[dict[str, object], ...],
     ) -> bool:
         if event_type == EventType.CUSTOMER_EMOTIONAL_CUE:
             return any(turn["speaker"] == "customer" for turn in evidence_turns)
@@ -146,21 +151,33 @@ class OpenAISemanticAnalyzer:
             EventType.MISSED_EMOTIONAL_CUE,
             EventType.PREMATURE_PROBLEM_SOLVING,
         }:
-            customer_starts = [
-                int(turn["startTimeMs"])
+            advisor_turns = [turn for turn in evidence_turns if turn["speaker"] == "advisor"]
+            customer_ids = {
+                str(turn["id"])
                 for turn in evidence_turns
                 if turn["speaker"] == "customer"
-            ]
-            advisor_starts = [
-                int(turn["startTimeMs"])
-                for turn in evidence_turns
-                if turn["speaker"] == "advisor"
-            ]
-            return any(
-                customer_start < advisor_start
-                for customer_start in customer_starts
-                for advisor_start in advisor_starts
+            }
+            if len(advisor_turns) != 1 or not customer_ids:
+                return False
+
+            advisor_id = str(advisor_turns[0]["id"])
+            advisor_index = next(
+                (
+                    index
+                    for index, turn in enumerate(snapshot_turns)
+                    if str(turn["id"]) == advisor_id
+                ),
+                None,
             )
+            if advisor_index is None:
+                return False
+
+            contribution_ids: set[str] = set()
+            index = advisor_index - 1
+            while index >= 0 and snapshot_turns[index]["speaker"] == "customer":
+                contribution_ids.add(str(snapshot_turns[index]["id"]))
+                index -= 1
+            return customer_ids.issubset(contribution_ids)
         return False
 
     @staticmethod
@@ -179,7 +196,12 @@ class OpenAISemanticAnalyzer:
                 for turn in snapshot.turns
             ],
             "recentEvents": [
-                {"area": event.area.value, "type": event.type.value, "confidence": event.confidence.value}
+                {
+                    "area": event.area.value,
+                    "type": event.type.value,
+                    "confidence": event.confidence.value,
+                    "timestampMs": event.timestamp_ms,
+                }
                 for event in snapshot.events
             ],
             "recentNudges": [nudge.nudge_key.value for nudge in snapshot.nudges],

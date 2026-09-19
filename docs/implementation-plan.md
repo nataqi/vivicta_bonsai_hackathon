@@ -338,6 +338,8 @@ Also verify TypeScript accepts binary WebSocket sending, message discrimination,
 - End Meeting immediately clears the live transcript and nudge; Slice 3 will replace the empty post-end state with the post-meeting flow.
 - Turn-taking/interruption remains pending real two-person manual verification because single-device synthetic voice does not reliably preserve overlap; automated interruption tests pass. Single-microphone diarization remains an MVP limitation, and finalized-turn latency can noticeably delay transcript/nudge appearance; tune only if it becomes a demo blocker.
 
+**Material code-review fixes:** Pace uses recognized word-span elapsed time; stale semantic results are discarded before mutating context; customer-response evidence must cite the first adviser response; and semantic events expire after two minutes.
+
 ### 1. Proposed Flow
 
 ```text

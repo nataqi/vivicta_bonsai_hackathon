@@ -3,14 +3,14 @@ import json
 import logging
 import os
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Awaitable, Callable
 from uuid import uuid4
 
 from deepgram import AsyncDeepgramClient
 from deepgram.listen.v1.types.listen_v1results import ListenV1Results
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
-from app.coaching import CoachingSession, TimedWord, TurnObservation
+from app.coaching import CoachingSession, LiveNudge, TimedWord, TurnObservation
 from app.semantic_analysis import OpenAISemanticAnalyzer
 
 router = APIRouter()
@@ -125,6 +125,23 @@ async def _send_json(websocket: WebSocket, payload: dict[str, Any]) -> bool:
         return False
 
 
+async def emit_coached_observation(
+    observation: TurnObservation,
+    coaching: CoachingSession,
+    send: Callable[[dict[str, Any]], Awaitable[bool]],
+) -> None:
+    if not await send({"type": "speaker_turn", "turn": observation.turn}):
+        raise WebSocketDisconnect()
+
+    async def send_nudge(nudge: LiveNudge) -> None:
+        await send({"type": "live_nudge", "nudge": nudge.to_payload()})
+
+    nudge = coaching.observe(observation)
+    if nudge:
+        await send_nudge(nudge)
+    coaching.schedule_semantic(send_nudge)
+
+
 @router.websocket("/ws/transcription")
 async def transcription_websocket(websocket: WebSocket) -> None:
     await websocket.accept()
@@ -137,17 +154,6 @@ async def transcription_websocket(websocket: WebSocket) -> None:
     async def send(payload: dict[str, Any]) -> bool:
         async with send_lock:
             return await _send_json(websocket, payload)
-
-    async def send_nudge(nudge: Any) -> None:
-        await send({"type": "live_nudge", "nudge": nudge.to_payload()})
-
-    async def emit_observation(observation: TurnObservation) -> None:
-        if not await send({"type": "speaker_turn", "turn": observation.turn}):
-            raise WebSocketDisconnect()
-        nudge = coaching.observe(observation)
-        if nudge:
-            await send_nudge(nudge)
-        coaching.schedule_semantic(send_nudge)
 
     try:
         deepgram = AsyncDeepgramClient(api_key=os.environ["DEEPGRAM_API_KEY"])
@@ -200,7 +206,7 @@ async def transcription_websocket(websocket: WebSocket) -> None:
                         continue
 
                     for observation in assembler.consume_observations(result):
-                        await emit_observation(observation)
+                        await emit_coached_observation(observation, coaching, send)
 
                     if result.from_finalize:
                         finalized.set()
@@ -235,7 +241,7 @@ async def transcription_websocket(websocket: WebSocket) -> None:
                     deepgram_task.cancel()
 
                 for observation in assembler.flush_observations():
-                    await emit_observation(observation)
+                    await emit_coached_observation(observation, coaching, send)
                 await send({"type": "session.stopped"})
             else:
                 await connection.send_finalize()
