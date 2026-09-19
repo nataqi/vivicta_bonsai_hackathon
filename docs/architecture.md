@@ -96,7 +96,9 @@ The system may use lower-level measurements internally, but the adviser should r
 
 ## Coaching Focus
 
-The system monitors all five coaching dimensions during every meeting.
+The system monitors all five coaching dimensions during every meeting. Selected
+focus areas are prioritized when deciding which eligible nudge to show;
+selecting a focus does not disable monitoring of the other dimensions.
 
 The adviser may choose one or more dimensions as their current coaching focus.
 

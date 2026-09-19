@@ -15,6 +15,20 @@ export type SpeakerTurn = {
   isFinal: boolean;
 };
 
+export type CoachingArea =
+  | "pace_and_pauses"
+  | "turn_taking_and_interruptions"
+  | "open_questions"
+  | "acknowledging_emotional_cues"
+  | "stay_before_solving";
+
+export type LiveNudge = {
+  area: CoachingArea;
+  nudgeKey: string;
+  text: string;
+  timestampMs: number;
+};
+
 export type TranscriptionStatus =
   | "idle"
   | "requesting"
@@ -28,6 +42,7 @@ type ServerMessage =
   | { type: "session.ready" }
   | { type: "session.stopped" }
   | { type: "speaker_turn"; turn: SpeakerTurn }
+  | { type: "live_nudge"; nudge: LiveNudge }
   | { type: "error"; message: string };
 
 function isSpeakerTurn(value: unknown): value is SpeakerTurn {
@@ -44,10 +59,22 @@ function isSpeakerTurn(value: unknown): value is SpeakerTurn {
   );
 }
 
+function isLiveNudge(value: unknown): value is LiveNudge {
+  if (!value || typeof value !== "object") return false;
+  const nudge = value as Partial<LiveNudge>;
+  return (
+    typeof nudge.area === "string" &&
+    typeof nudge.nudgeKey === "string" &&
+    typeof nudge.text === "string" &&
+    typeof nudge.timestampMs === "number"
+  );
+}
+
 export function useLiveTranscription() {
   const [status, setStatus] = useState<TranscriptionStatus>("idle");
   const [turns, setTurns] = useState<SpeakerTurn[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [currentNudge, setCurrentNudge] = useState<LiveNudge | null>(null);
 
   const websocketRef = useRef<WebSocket | null>(null);
   const recorderRef = useRef<MediaRecorder | null>(null);
@@ -57,6 +84,15 @@ export function useLiveTranscription() {
   const mountedRef = useRef(true);
   const expectedCloseRef = useRef(false);
   const stopRequestedRef = useRef(false);
+  const acceptLiveContentRef = useRef(false);
+  const nudgeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const clearLiveContent = useCallback(() => {
+    setTurns([]);
+    setCurrentNudge(null);
+    if (nudgeTimerRef.current) clearTimeout(nudgeTimerRef.current);
+    nudgeTimerRef.current = null;
+  }, []);
 
   const disposeSession = useCallback((closeSocket = true) => {
     const recorder = recorderRef.current;
@@ -82,16 +118,19 @@ export function useLiveTranscription() {
     }
     websocketRef.current = null;
     sendChainRef.current = Promise.resolve();
+    if (nudgeTimerRef.current) clearTimeout(nudgeTimerRef.current);
+    nudgeTimerRef.current = null;
   }, []);
 
-  const start = useCallback(async () => {
+  const start = useCallback(async (focusAreas: CoachingArea[]) => {
     expectedCloseRef.current = true;
     disposeSession();
     expectedCloseRef.current = false;
     stopRequestedRef.current = false;
+    acceptLiveContentRef.current = true;
     const generation = ++generationRef.current;
 
-    setTurns([]);
+    clearLiveContent();
     setError(null);
     setStatus("requesting");
 
@@ -169,6 +208,8 @@ export function useLiveTranscription() {
         }
         if (recorderRef.current) return;
 
+        websocket.send(JSON.stringify({ type: "session.configure", focusAreas }));
+
         const recorder = new MediaRecorder(stream, { mimeType: AUDIO_MIME_TYPE });
         recorderRef.current = recorder;
         recorder.ondataavailable = (audioEvent) => {
@@ -196,13 +237,31 @@ export function useLiveTranscription() {
       }
 
       if (message.type === "speaker_turn" && isSpeakerTurn(message.turn)) {
+        if (!acceptLiveContentRef.current) return;
         setTurns((current) => [...current, message.turn]);
+        return;
+      }
+
+      if (message.type === "live_nudge" && isLiveNudge(message.nudge)) {
+        if (!acceptLiveContentRef.current) return;
+        if (nudgeTimerRef.current) clearTimeout(nudgeTimerRef.current);
+        setCurrentNudge(message.nudge);
+        nudgeTimerRef.current = setTimeout(() => {
+          if (
+            generation === generationRef.current &&
+            mountedRef.current &&
+            acceptLiveContentRef.current
+          ) {
+            setCurrentNudge(null);
+          }
+        }, 8_000);
         return;
       }
 
       if (message.type === "session.stopped") {
         expectedCloseRef.current = true;
         disposeSession();
+        clearLiveContent();
         setStatus("stopped");
         return;
       }
@@ -227,10 +286,12 @@ export function useLiveTranscription() {
         fail("The live transcription connection closed. Please try again.");
       }
     };
-  }, [disposeSession]);
+  }, [clearLiveContent, disposeSession]);
 
   const stop = useCallback(() => {
     stopRequestedRef.current = true;
+    acceptLiveContentRef.current = false;
+    clearLiveContent();
     setStatus("stopping");
 
     const recorder = recorderRef.current;
@@ -245,6 +306,7 @@ export function useLiveTranscription() {
       } else {
         expectedCloseRef.current = true;
         disposeSession();
+        clearLiveContent();
         if (mountedRef.current) setStatus("stopped");
       }
     };
@@ -259,18 +321,21 @@ export function useLiveTranscription() {
     } else if (websocket?.readyState === WebSocket.CONNECTING) {
       expectedCloseRef.current = true;
       disposeSession();
+      clearLiveContent();
       setStatus("stopped");
     } else {
       expectedCloseRef.current = true;
       disposeSession();
+      clearLiveContent();
       setStatus("stopped");
     }
-  }, [disposeSession]);
+  }, [clearLiveContent, disposeSession]);
 
   useEffect(() => {
     mountedRef.current = true;
     return () => {
       mountedRef.current = false;
+      acceptLiveContentRef.current = false;
       generationRef.current += 1;
       expectedCloseRef.current = true;
       disposeSession();
@@ -281,6 +346,7 @@ export function useLiveTranscription() {
     status,
     turns,
     error,
+    currentNudge,
     start,
     stop,
     isActive:

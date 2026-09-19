@@ -118,6 +118,15 @@ class SpeakerTurnAssemblerTests(unittest.TestCase):
         self.assertEqual(first_turn["speaker"], "advisor")
         self.assertEqual(second_turn["speaker"], "advisor")
 
+    def test_observation_keeps_word_timing_backend_only(self) -> None:
+        assembler = SpeakerTurnAssembler()
+        observations = assembler.consume_observations(
+            result([word("hello", 1.0, 1.4, 0)], speech_final=True)
+        )
+
+        self.assertEqual(observations[0].words[0].start_time_ms, 1000)
+        self.assertNotIn("words", observations[0].turn)
+
 
 if __name__ == "__main__":
     unittest.main()
