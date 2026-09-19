@@ -104,6 +104,19 @@ class SpeakerTurnAssemblerTests(unittest.TestCase):
         self.assertEqual(len(turns), 1)
         self.assertEqual(assembler.flush(), [])
 
+    def test_timeout_flush_keeps_final_observation_for_session_processing(self) -> None:
+        assembler = SpeakerTurnAssembler()
+        assembler.consume_observations(
+            result([word("final", 4.0, 4.4, 0)], speech_final=False)
+        )
+
+        observations = assembler.flush_observations()
+
+        self.assertEqual(len(observations), 1)
+        self.assertEqual(observations[0].turn["text"], "final")
+        self.assertEqual(observations[0].words[0].start_time_ms, 4000)
+        self.assertEqual(assembler.flush_observations(), [])
+
     def test_new_session_has_fresh_speaker_mapping(self) -> None:
         first_session = SpeakerTurnAssembler()
         second_session = SpeakerTurnAssembler()

@@ -235,7 +235,7 @@ async def transcription_websocket(websocket: WebSocket) -> None:
                     deepgram_task.cancel()
 
                 for observation in assembler.flush_observations():
-                    await send({"type": "speaker_turn", "turn": observation.turn})
+                    await emit_observation(observation)
                 await send({"type": "session.stopped"})
             else:
                 await connection.send_finalize()

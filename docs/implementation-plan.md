@@ -8,6 +8,8 @@ This document is the single source of truth for approved implementation plans. E
 
 **Manual verification:** Real browser microphone streaming works; finalized transcript turns appear during the live session; immediate Stop flushes the final phrase; and session cleanup and restart work correctly. Two-person speaker diarization works, though speaker separation was somewhat inconsistent across attempts and remains a known MVP limitation.
 
+**Review lifecycle fix:** Ending a meeting now clears the live transcript and nudge immediately while retaining accepted finalized turns in temporary session state through Deepgram finalization. Stopping during a pending microphone request invalidates startup and stops any stream that resolves afterward.
+
 ### 1. Proposed Flow
 
 ```text

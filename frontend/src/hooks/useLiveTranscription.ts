@@ -73,6 +73,7 @@ function isLiveNudge(value: unknown): value is LiveNudge {
 export function useLiveTranscription() {
   const [status, setStatus] = useState<TranscriptionStatus>("idle");
   const [turns, setTurns] = useState<SpeakerTurn[]>([]);
+  const [sessionTurns, setSessionTurns] = useState<SpeakerTurn[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [currentNudge, setCurrentNudge] = useState<LiveNudge | null>(null);
 
@@ -84,7 +85,8 @@ export function useLiveTranscription() {
   const mountedRef = useRef(true);
   const expectedCloseRef = useRef(false);
   const stopRequestedRef = useRef(false);
-  const acceptLiveContentRef = useRef(false);
+  const acceptVisibleLiveContentRef = useRef(false);
+  const acceptSessionTurnsRef = useRef(false);
   const nudgeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const clearLiveContent = useCallback(() => {
@@ -127,10 +129,12 @@ export function useLiveTranscription() {
     disposeSession();
     expectedCloseRef.current = false;
     stopRequestedRef.current = false;
-    acceptLiveContentRef.current = true;
+    acceptVisibleLiveContentRef.current = true;
+    acceptSessionTurnsRef.current = true;
     const generation = ++generationRef.current;
 
     clearLiveContent();
+    setSessionTurns([]);
     setError(null);
     setStatus("requesting");
 
@@ -185,6 +189,8 @@ export function useLiveTranscription() {
     const fail = (message: string) => {
       if (generation !== generationRef.current || !mountedRef.current) return;
       expectedCloseRef.current = true;
+      acceptVisibleLiveContentRef.current = false;
+      acceptSessionTurnsRef.current = false;
       disposeSession();
       setError(message);
       setStatus("error");
@@ -237,20 +243,23 @@ export function useLiveTranscription() {
       }
 
       if (message.type === "speaker_turn" && isSpeakerTurn(message.turn)) {
-        if (!acceptLiveContentRef.current) return;
-        setTurns((current) => [...current, message.turn]);
+        if (!acceptSessionTurnsRef.current) return;
+        setSessionTurns((current) => [...current, message.turn]);
+        if (acceptVisibleLiveContentRef.current) {
+          setTurns((current) => [...current, message.turn]);
+        }
         return;
       }
 
       if (message.type === "live_nudge" && isLiveNudge(message.nudge)) {
-        if (!acceptLiveContentRef.current) return;
+        if (!acceptVisibleLiveContentRef.current) return;
         if (nudgeTimerRef.current) clearTimeout(nudgeTimerRef.current);
         setCurrentNudge(message.nudge);
         nudgeTimerRef.current = setTimeout(() => {
           if (
             generation === generationRef.current &&
             mountedRef.current &&
-            acceptLiveContentRef.current
+            acceptVisibleLiveContentRef.current
           ) {
             setCurrentNudge(null);
           }
@@ -260,6 +269,7 @@ export function useLiveTranscription() {
 
       if (message.type === "session.stopped") {
         expectedCloseRef.current = true;
+        acceptSessionTurnsRef.current = false;
         disposeSession();
         clearLiveContent();
         setStatus("stopped");
@@ -289,13 +299,23 @@ export function useLiveTranscription() {
   }, [clearLiveContent, disposeSession]);
 
   const stop = useCallback(() => {
-    stopRequestedRef.current = true;
-    acceptLiveContentRef.current = false;
-    clearLiveContent();
-    setStatus("stopping");
-
     const recorder = recorderRef.current;
     const websocket = websocketRef.current;
+
+    if (!streamRef.current && !websocket && !recorder) {
+      generationRef.current += 1;
+      stopRequestedRef.current = true;
+      acceptVisibleLiveContentRef.current = false;
+      acceptSessionTurnsRef.current = false;
+      clearLiveContent();
+      setStatus("stopped");
+      return;
+    }
+
+    stopRequestedRef.current = true;
+    acceptVisibleLiveContentRef.current = false;
+    clearLiveContent();
+    setStatus("stopping");
 
     const sendStop = async () => {
       await sendChainRef.current;
@@ -319,12 +339,15 @@ export function useLiveTranscription() {
     } else if (websocket?.readyState === WebSocket.OPEN) {
       void sendStop();
     } else if (websocket?.readyState === WebSocket.CONNECTING) {
+      generationRef.current += 1;
       expectedCloseRef.current = true;
+      acceptSessionTurnsRef.current = false;
       disposeSession();
       clearLiveContent();
       setStatus("stopped");
     } else {
       expectedCloseRef.current = true;
+      acceptSessionTurnsRef.current = false;
       disposeSession();
       clearLiveContent();
       setStatus("stopped");
@@ -335,7 +358,8 @@ export function useLiveTranscription() {
     mountedRef.current = true;
     return () => {
       mountedRef.current = false;
-      acceptLiveContentRef.current = false;
+      acceptVisibleLiveContentRef.current = false;
+      acceptSessionTurnsRef.current = false;
       generationRef.current += 1;
       expectedCloseRef.current = true;
       disposeSession();
@@ -345,6 +369,7 @@ export function useLiveTranscription() {
   return {
     status,
     turns,
+    sessionTurns,
     error,
     currentNudge,
     start,
