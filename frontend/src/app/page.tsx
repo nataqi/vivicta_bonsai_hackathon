@@ -116,8 +116,24 @@ export default function Home() {
     if (status === "stopped" && !completedSessionId && phase === "finalizing") {
       timers.push(window.setTimeout(() => setPhase("idle"), 0));
     }
+    if (status === "error" && phase === "finalizing") {
+      const message = transcriptionError ?? "The meeting could not be finalized. Please try again.";
+      timers.push(
+        window.setTimeout(() => {
+          clearCompletedSession();
+          setReport(null);
+          setReportError(message);
+          setReflectionMessages([initialReflection]);
+          setReflectionDraft("");
+          setReflectionError(null);
+          setReflectionComplete(false);
+          pendingReflectionRef.current = null;
+          setPhase("idle");
+        }, 0),
+      );
+    }
     return () => timers.forEach((timer) => window.clearTimeout(timer));
-  }, [completedSessionId, phase, report, requestReport, status]);
+  }, [clearCompletedSession, completedSessionId, phase, report, requestReport, status, transcriptionError]);
 
   const toggleFocus = (area: CoachingArea) => {
     if (isActive || phase !== "idle") return;
@@ -237,7 +253,11 @@ export default function Home() {
   };
 
   const isMeeting = (phase === "starting" || phase === "listening" || phase === "finalizing") && status !== "error";
-  const effectiveError = transcriptionError && (isMeeting || status === "error") ? transcriptionError : null;
+  const effectiveError = transcriptionError && (isMeeting || status === "error")
+    ? transcriptionError
+    : phase === "idle"
+      ? reportError
+      : null;
 
   if (phase === "preparing_report" || phase === "finalizing") {
     return <TransitionScreen finalizing={phase === "finalizing"} />;

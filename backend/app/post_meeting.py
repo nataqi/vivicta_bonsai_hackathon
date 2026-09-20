@@ -35,6 +35,17 @@ REPORT_TIMEOUT_SECONDS = 15.0
 REFLECTION_TIMEOUT_SECONDS = 10.0
 SESSION_TTL_SECONDS = 30 * 60
 
+BOUNDED_TEXT_LIMITS = {
+    "focus_summary": 220,
+    "takeaway": 160,
+    "reflection_context": 600,
+    "coach_message": 300,
+}
+BOUNDED_LIST_ITEM_LIMITS = {
+    "strengths": 180,
+    "improvements": 180,
+}
+
 SEMANTIC_EVENT_TYPES = {
     EventType.CLOSED_QUESTION_PATTERN,
     EventType.CUSTOMER_EMOTIONAL_CUE,
@@ -44,6 +55,8 @@ SEMANTIC_EVENT_TYPES = {
 
 
 class PostMeetingReport(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     strengths: list[str] = Field(min_length=1, max_length=2)
     improvements: list[str] = Field(min_length=1, max_length=2)
     focus_summary: str = Field(min_length=1, max_length=220)
@@ -79,6 +92,8 @@ class InternalReport(PostMeetingReport):
 
 
 class ReflectionFollowUp(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     coach_message: str = Field(min_length=1, max_length=300)
 
     @field_validator("coach_message")
@@ -91,6 +106,8 @@ class ReflectionFollowUp(BaseModel):
 
 
 class ReflectionCompletion(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     coach_message: str = Field(min_length=1, max_length=300)
     takeaway: str = Field(min_length=1, max_length=160)
 
@@ -339,7 +356,30 @@ be a short generic summary of adviser behavior, with no customer details or quot
         if not content:
             raise PostMeetingAIError("OpenRouter returned no structured output")
         try:
-            return schema.model_validate_json(content)
+            decoded = json.loads(content)
+        except json.JSONDecodeError as error:
+            details = [{"type": "json_invalid", "loc": ()}]
+            logger.warning(
+                "OpenRouter structured output validation failed: count=%d errors=%s",
+                len(details),
+                details,
+            )
+            raise PostMeetingAIError("Invalid structured output") from error
+        if not isinstance(decoded, dict):
+            raise PostMeetingAIError("Invalid structured output")
+        normalized = dict(decoded)
+        for field_name, limit in BOUNDED_TEXT_LIMITS.items():
+            value = normalized.get(field_name)
+            if isinstance(value, str):
+                normalized[field_name] = value[:limit]
+        for field_name, limit in BOUNDED_LIST_ITEM_LIMITS.items():
+            value = normalized.get(field_name)
+            if isinstance(value, list):
+                normalized[field_name] = [
+                    item[:limit] if isinstance(item, str) else item for item in value
+                ]
+        try:
+            return schema.model_validate(normalized)
         except ValidationError as error:
             details = [
                 {"type": item["type"], "loc": item["loc"]}

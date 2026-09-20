@@ -230,7 +230,7 @@ class PostMeetingTests(unittest.IsolatedAsyncioTestCase):
         invalid_report = {
             "strengths": ["A strength."],
             "improvements": ["An improvement."],
-            "focus_summary": "CUSTOMER SECRET " + ("x" * 230),
+            "focus_summary": {"content": "CUSTOMER SECRET"},
             "takeaway": "A takeaway.",
             "reflection_context": "A bounded context.",
         }
@@ -254,10 +254,94 @@ class PostMeetingTests(unittest.IsolatedAsyncioTestCase):
             for line in captured.output
             if "structured output validation failed" in line
         )
-        self.assertIn("string_too_long", diagnostic)
+        self.assertIn("string_type", diagnostic)
         self.assertIn("focus_summary", diagnostic)
         self.assertIn("count=1", diagnostic)
         self.assertNotIn("CUSTOMER SECRET", diagnostic)
+        self.assertIsNone(post_meeting.store.get(session_id).report)
+
+    async def test_overlong_report_text_is_truncated_before_validation(self) -> None:
+        overlong_report = {
+            "strengths": ["s" * 220],
+            "improvements": ["i" * 220],
+            "focus_summary": "f" * 260,
+            "takeaway": "t" * 200,
+            "reflection_context": "r" * 700,
+        }
+        post_meeting._ai_service = post_meeting.PostMeetingAI(
+            SimpleNamespace(
+                chat=SimpleNamespace(
+                    completions=FixedContentCompletions(json.dumps(overlong_report))
+                )
+            )
+        )
+        session_id = str(uuid4())
+        post_meeting.store.register(session_id, meeting_data())
+
+        response = await post_meeting.create_report(session_id)
+
+        self.assertEqual(len(response.report.strengths[0]), 180)
+        self.assertEqual(len(response.report.improvements[0]), 180)
+        self.assertEqual(len(response.report.focus_summary), 220)
+        self.assertEqual(len(response.report.takeaway), 160)
+        self.assertEqual(len(post_meeting.store.get(session_id).reflection_context), 600)
+
+    async def test_structurally_invalid_report_json_remains_recoverable(self) -> None:
+        invalid_report = {
+            "strengths": "not a list",
+            "improvements": ["An improvement."],
+            "focus_summary": "A focus.",
+            "takeaway": "A takeaway.",
+            "reflection_context": "A bounded context.",
+        }
+        post_meeting._ai_service = post_meeting.PostMeetingAI(
+            SimpleNamespace(
+                chat=SimpleNamespace(
+                    completions=FixedContentCompletions(json.dumps(invalid_report))
+                )
+            )
+        )
+        session_id = str(uuid4())
+        post_meeting.store.register(session_id, meeting_data())
+
+        with self.assertRaises(HTTPException) as failure:
+            await post_meeting.create_report(session_id)
+
+        self.assertEqual(failure.exception.status_code, 503)
+        self.assertIsNone(post_meeting.store.get(session_id).report)
+
+    async def test_unexpected_report_field_remains_recoverable_and_sanitized(self) -> None:
+        valid_report_with_extra = {
+            "strengths": ["A strength."],
+            "improvements": ["An improvement."],
+            "focus_summary": "A focus.",
+            "takeaway": "A takeaway.",
+            "reflection_context": "A bounded context.",
+            "unexpected": "CUSTOMER SECRET MODEL CONTENT",
+        }
+        post_meeting._ai_service = post_meeting.PostMeetingAI(
+            SimpleNamespace(
+                chat=SimpleNamespace(
+                    completions=FixedContentCompletions(json.dumps(valid_report_with_extra))
+                )
+            )
+        )
+        session_id = str(uuid4())
+        post_meeting.store.register(session_id, meeting_data())
+
+        with self.assertLogs("app.post_meeting", level="WARNING") as captured:
+            with self.assertRaises(HTTPException) as failure:
+                await post_meeting.create_report(session_id)
+
+        self.assertEqual(failure.exception.status_code, 503)
+        diagnostic = next(
+            line
+            for line in captured.output
+            if "structured output validation failed" in line
+        )
+        self.assertIn("extra_forbidden", diagnostic)
+        self.assertIn("unexpected", diagnostic)
+        self.assertNotIn("CUSTOMER SECRET MODEL CONTENT", diagnostic)
         self.assertIsNone(post_meeting.store.get(session_id).report)
 
     async def test_report_failure_remains_retryable(self) -> None:
