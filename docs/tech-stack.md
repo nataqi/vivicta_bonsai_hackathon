@@ -135,11 +135,8 @@ The live transcription output is normalized by the backend into the application'
 
 Deepgram was chosen because it fits the real-time meeting architecture well and offers low integration overhead.
 
-### Fallback
-
-AssemblyAI may be used as a fallback if Deepgram causes implementation or diarization issues.
-
-The MVP should not integrate both unless necessary.
+Deepgram is the only transcription provider integrated in the MVP. AssemblyAI is
+not integrated; it was only a historical fallback consideration.
 
 ---
 
@@ -151,6 +148,11 @@ Application LLM access uses OpenRouter with `google/gemini-2.5-flash` for live
 semantic analysis, post-meeting reports, and reflection. The backend uses
 OpenRouter's OpenAI-compatible Chat Completions API with strict JSON Schema
 structured outputs.
+
+The endpoint is `https://openrouter.ai/api/v1` and the required credential is
+`OPENROUTER_API_KEY`. The Python `openai` package is retained as the client SDK
+for this compatible endpoint; it does not mean the application calls direct
+OpenAI services or uses `OPENAI_API_KEY`.
 
 OpenRouter is an additional processor/router for temporary conversation data.
 The application keeps customer conversation data in temporary in-memory session
@@ -222,14 +224,21 @@ Temporary meeting data should remain outside normal persistent adviser storage.
 This includes:
 
 - live transcript
+- meeting audio while it is being streamed
 - rolling context
 - customer-specific information
+- reflection dictation audio and intermediate transcript
 - detected meeting events
 - detailed behavioral measurements
 - temporary post-meeting analysis
 - raw audio where applicable
 
 For the MVP, this may be held in application memory or another simple ephemeral session mechanism.
+
+Live session state clears on stop, failure, and reset. Post-meeting in-memory
+state is removed on Finish/completion or explicit cleanup. Abandoned post-meeting
+sessions expire after 30 minutes when the store is accessed; there is no general
+background deletion scheduler.
 
 Do not introduce additional infrastructure unless needed.
 
@@ -302,7 +311,7 @@ Backend
 
 Speech-to-Text
 - Deepgram
-- AssemblyAI as fallback only
+- no secondary transcription provider integrated
 
 AI
 - OpenRouter / Google Gemini

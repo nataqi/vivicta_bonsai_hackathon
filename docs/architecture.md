@@ -74,7 +74,10 @@ Generic adviser learning
 Persistent adviser profile/history
 ```
 
-After the post-meeting coaching session finishes, temporary customer conversation data is deleted.
+When the adviser finishes the post-meeting flow, the in-memory post-meeting session is
+deleted and generic adviser-learning fields may be written to SQLite. Abandoned
+post-meeting sessions expire after 30 minutes when the store is accessed; there is
+no background deletion scheduler.
 
 ---
 
@@ -105,8 +108,10 @@ The adviser may choose one or more dimensions as their current coaching focus.
 Selected focus areas:
 
 - receive higher priority during live coaching
-- may use a lower intervention threshold
 - receive more attention in the post-meeting report
+
+Focus does not lower the high-confidence eligibility threshold. It affects
+priority only.
 
 Non-selected areas are still monitored.
 
@@ -128,7 +133,7 @@ There is no separate pre-meeting focus-confirmation workflow.
 
 The microphone audio is streamed to Deepgram.
 
-The transcription layer should provide:
+The transcription layer provides:
 
 - near-real-time transcription
 - speaker separation / diarization
@@ -138,10 +143,10 @@ The transcription layer should provide:
 
 The transcript is temporary session data.
 
-For the hackathon MVP, speaker mapping may be simplified:
+For the hackathon MVP, speaker mapping is simplified:
 
 - first detected speaker → adviser
-- second detected speaker → customer
+- every other observed speaker label → customer
 
 A production implementation should use a more reliable identity mechanism such as separate audio channels or known adviser input.
 
@@ -151,7 +156,7 @@ Biometric voice identification is not required.
 
 ## Speaker Turns
 
-The application should normalize transcription output into a simple internal representation.
+The application normalizes transcription output into a simple internal representation.
 
 Example:
 
@@ -167,9 +172,14 @@ type SpeakerTurn = {
 }
 ```
 
-The application should primarily run semantic analysis after a speaker turn has been finalized.
+The application runs behavioral and semantic coaching after a speaker turn has been
+finalized. It does not run a periodic 8–10 second partial-turn fallback. Coherent
+finalized turns are preferred, so short handoffs or long uninterrupted speech can
+introduce visible transcript and coaching latency while Deepgram endpointing completes.
 
-If someone speaks continuously for an unusually long time, a fallback analysis may run approximately every 8–10 seconds rather than waiting indefinitely for the turn to finish.
+Live Deepgram configuration is `nova-3`, `diarize_model="latest"`, and
+`endpointing=500`. Finalized word results are buffered and emitted at the Deepgram
+turn boundary; incremental speaker-boundary emission is not part of the current MVP.
 
 ---
 
@@ -228,11 +238,14 @@ For example:
 
 # Semantic Analysis
 
-Semantic analysis is handled through OpenRouter using `google/gemini-2.5-flash`.
+Semantic analysis is handled through OpenRouter using `google/gemini-2.5-flash` at
+`https://openrouter.ai/api/v1`. The Python `openai` package is used only as the
+OpenRouter-compatible client SDK; application calls do not use direct OpenAI or
+`OPENAI_API_KEY`.
 OpenRouter is an additional processor/router for temporary conversation data; the
 application keeps this data in memory only and does not intentionally persist it.
 
-The LLM should focus on signals requiring meaning and conversational context rather than deterministic measurements.
+The LLM focuses on signals requiring meaning and conversational context rather than deterministic measurements.
 
 Examples include:
 
@@ -242,7 +255,7 @@ Examples include:
 - whether the adviser moved too quickly into problem-solving
 - whether a live intervention is warranted
 
-Semantic analysis should return structured output rather than unrestricted prose.
+Semantic analysis returns structured output rather than unrestricted prose.
 
 Conceptually:
 
@@ -506,18 +519,20 @@ The experience should take roughly 90 seconds to 2 minutes rather than becoming 
 
 After viewing the report, the adviser may optionally start a short AI reflection conversation.
 
-The reflection coach may temporarily access:
+The report-generation step may use the complete temporary meeting snapshot.
+Reflection generation does not receive the full transcript. It uses only:
 
-- the full meeting transcript
-- structured meeting analysis
-- behavioral events
-- adviser coaching history
 - selected coaching focus
+- the generated structured report
+- bounded generic reflection context
 - the adviser's responses during reflection
 
 The adviser does not need to see the raw transcript.
 
-The AI may use it internally to refer to relevant moments.
+Reflection voice dictation uses the separate `/ws/reflection-dictation` Deepgram
+WebSocket. It has no diarization, does not create live coaching observations, and
+produces temporary text that the adviser can edit before sending. Dictation audio
+and intermediate transcript are not persisted.
 
 A typical reflection may follow:
 
@@ -581,6 +596,7 @@ The core privacy principle is:
 The following may exist temporarily:
 
 - raw audio
+- reflection dictation audio and intermediate transcript
 - full transcript
 - rolling context
 - customer identifiers
@@ -597,6 +613,11 @@ Temporary data may be used during:
 2. post-meeting report generation
 3. the optional immediate reflection session
 
+Live state clears on stop, failure, and reset. During report and reflection, the
+completed meeting snapshot remains in the in-memory post-meeting store until
+Finish, explicit cleanup, backend restart, or expiry after 30 minutes when the
+store is accessed.
+
 If the adviser chooses reflection:
 
 ```text
@@ -610,7 +631,7 @@ Reflection session
   ↓
 Extract adviser learning
   ↓
-Delete transcript/customer context
+Finish / cleanup and delete temporary session state
 ```
 
 If the adviser skips reflection:
@@ -624,7 +645,7 @@ Post-meeting report
   ↓
 Extract adviser learning
   ↓
-Delete transcript/customer context
+Finish / cleanup and delete temporary session state
 ```
 
 The transcript should not become long-term history.
