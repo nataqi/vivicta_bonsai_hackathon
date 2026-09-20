@@ -1059,7 +1059,7 @@ During the live meeting, customer content exists only in Deepgram’s active str
 
 At End meeting, visible `turns` and `currentNudge` clear immediately; `sessionTurns` remains temporarily so the existing final-turn hardening is preserved; the backend creates the completed snapshot only after final flush; and live assembler and coaching objects are then closed.
 
-During report/reflection, customer-specific state exists only in the in-memory post-meeting session and bounded in-flight OpenAI requests using `store=False`. Nothing is written to disk or Supabase.
+During report/reflection, customer-specific state exists only in the in-memory post-meeting session and bounded in-flight OpenAI requests using `store=False`. Nothing is written to persistent learning storage until the completion boundary.
 
 On direct Finish or Finish after reflection:
 
@@ -1075,7 +1075,7 @@ Additional safety:
 - Unexpected WebSocket disconnect does not create a completed snapshot.
 - Starting a new meeting always receives a new UUID.
 - Deletion never reintroduces data if a late report/reflection response arrives.
-- Slice 3 retains no adviser takeaway or other learning persistently; that remains Slice 4 work.
+- Slice 3 retains no adviser takeaway or other learning persistently; Slice 4 adds the separate canonical SQLite learning layer.
 
 ### 9. Verification
 
@@ -1152,3 +1152,179 @@ Short manual test:
 8. Replace the stopped live state with preparation, report, failure, reflection, and Finish views in the root page.
 9. Run backend checks plus frontend lint/build.
 10. Perform the short Daniel/Samantha end-to-end test and tune only prompt wording, output limits, or timeout values supported by observed behavior.
+
+## Slice 4 — Persistent Adviser Learning
+
+**Status:** Complete
+
+### 1. End-to-End Flow
+
+1. Home requests the demo adviser's saved focus and recent insight from the backend.
+2. The backend initializes a local SQLite database automatically, reads at most the five most recent valid canonical learning records, and derives one qualitative insight with code-owned rules and templates.
+3. If no valid profile or history exists, Home keeps the current defaults and shows a first-use state. SQLite is local and zero-setup, so persistence remains available after backend restarts.
+4. Changing focus updates local UI state immediately and attempts to persist it. At least one focus area must remain selected.
+5. Start Meeting continues to send the current local focus through the existing transcription WebSocket; all five dimensions remain monitored.
+6. The structured report produces private canonical strength/improvement areas. A completed reflection produces a private canonical takeaway area.
+7. Finish calls POST /post-meeting/{session_id}/complete. The backend builds a narrow LearningCandidate, writes SQLite idempotently, and deletes all temporary post-meeting data regardless of persistence outcome.
+8. Home reloads its saved state. DELETE /post-meeting/{session_id} remains the fallback cleanup endpoint.
+
+This preserves: remember the learning, forget the customer conversation.
+
+### 2. Persistent Data Model
+
+SQLite is initialized automatically at backend/data/adviser_learning.db. An optional ADVISER_LEARNING_DB_PATH override is supported for tests/development; the default requires no configuration. The database directory is created on demand and the database file is ignored by Git.
+
+adviser_profiles stores:
+
+- id: stable code-owned demo adviser identifier (demo-adviser)
+- selected_focus: JSON text array of canonical CoachingArea values
+- created_at
+- updated_at
+
+adviser_learning_history stores:
+
+- id: completed session UUID primary/idempotency key
+- adviser_id
+- focus_areas: JSON text array
+- strength_areas: JSON text array
+- improvement_areas: JSON text array
+- takeaway_area: nullable canonical CoachingArea
+- created_at
+
+The repository validates every JSON array against the five canonical coaching dimensions, rejects duplicate/empty/unknown values, and reads at most five recent valid rows. No recurrence, progress state, recent insight, generated prose, or retention/pruning metadata is stored.
+
+### 3. Private Learning Classifications
+
+InternalReport additionally contains private enum-only strength_areas and improvement_areas. ReflectionCompletion additionally contains nullable enum-only takeaway_area. These fields remain temporary backend data and are excluded from PostMeetingReport, ReportResponse, and ReflectionResponse.
+
+If reflection is skipped, incomplete, or fails, takeaway_area remains null. Finish performs no extra OpenRouter call.
+
+### 4. Backend Boundaries
+
+backend/app/adviser_learning.py owns:
+
+- the narrow LearningCandidate and LearningRecord models;
+- SQLite initialization and repository operations;
+- strict canonical-area parsing;
+- deterministic insight templates;
+- Home, focus, and completion endpoints.
+
+The repository accepts only LearningCandidate. It never accepts CompletedMeetingSnapshot, PostMeetingSession, report prose, reflection messages, or any object carrying customer conversation data.
+
+The frontend never sends an adviser identity. The single local demo adviser is the code-owned demo-adviser identifier; authentication is outside this slice.
+
+### 5. API Contracts
+
+GET /adviser-learning/home returns focusAreas, recentInsight, and historyState (empty, ready, or unavailable). Missing/malformed history returns safe defaults without echoing stored content.
+
+PUT /adviser-learning/focus accepts one to five unique canonical focusAreas. Invalid values receive 422. SQLite failures receive a stable 503, while the frontend keeps the local focus usable for the current meeting.
+
+POST /post-meeting/{session_id}/complete:
+
+1. Reads only validated private canonical signals.
+2. Builds LearningCandidate with the session UUID as record ID.
+3. Upserts adviser profile and learning history in SQLite.
+4. Deletes the in-memory post-meeting session in finally, regardless of database success/failure.
+5. Returns learningSaved and cleanupComplete.
+
+The history primary key makes repeated completion idempotent. Exact response replay after the temporary session is deleted is not required. DELETE /post-meeting/{session_id} remains idempotent fallback cleanup.
+
+### 6. Home Changes
+
+Home state remains local to frontend/src/app/page.tsx.
+
+- Load persisted focus and insight on mount and after completion.
+- Keep current defaults when no valid persisted focus exists.
+- Prevent deselecting the final focus.
+- Save focus optimistically; a failure is shown without blocking Start Meeting.
+- Show one compact Recent coaching insight.
+- Show a first-use message when history is empty and an unavailable message only if the local database cannot be read.
+- Keep Start Meeting independent of persistence success.
+
+No dashboard, scores, grades, rankings, charts, manager views, or live-coaching rule changes are included.
+
+### 7. Privacy Boundary
+
+SQLite may receive only:
+
+- demo-adviser;
+- opaque session UUID idempotency key;
+- canonical coaching-area identifiers;
+- timestamps.
+
+It must never receive audio, transcript text, speaker turns, customer details/quotes/summaries, report prose, provider output, reflection messages/free text, reflection_context, semantic/behavioral evidence, nudges, or behavioral measurements.
+
+Insight and takeaway prose are generated from code-owned templates at read time and are not stored. Malformed rows are ignored safely; logs contain only operation names and sanitized validation metadata.
+
+### 8. Failure and Cleanup Behavior
+
+- Database initialization/read/write failure: Home shows unavailable state or focus-save error; meetings and current local focus continue.
+- Learning write failure: completion returns learningSaved false and still removes temporary post-meeting state.
+- Malformed rows: invalid rows are skipped; if no valid rows remain, Home reports unavailable history.
+- Missing private classifications: no partial learning row is written; cleanup still runs.
+- Frontend completion timeout: it attempts DELETE, clears client state, and returns Home.
+- No automatic retention pruning is performed.
+
+### 9. Files
+
+Existing files changed:
+
+- .gitignore: ignore SQLite database and sidecar files.
+- .env.example: retain only Deepgram/OpenRouter placeholders.
+- backend/app/adviser_learning.py: SQLite repository and endpoints.
+- backend/app/main.py: router registration.
+- backend/app/post_meeting.py: private canonical classifications.
+- frontend/src/app/page.tsx: persisted Home state and completion lifecycle.
+- backend/tests/test_post_meeting.py: private-field regression coverage.
+- docs/architecture.md, docs/tech-stack.md, and this plan: SQLite decision and boundaries.
+
+New files:
+
+- backend/tests/test_adviser_learning.py: isolated temporary-database coverage.
+
+No new dependency is required. The uncommitted external-database migration was removed.
+
+### 10. Verification
+
+Backend coverage includes automatic schema creation, focus/learning persistence across repository instances, first-use state, deterministic insight derivation, invalid focus values, skipped/completed reflection, allowlist checks, sentinel privacy checks, malformed rows, database failure cleanup, duplicate completion, and idempotent DELETE behavior.
+
+Run:
+
+    cd backend
+    .venv/bin/python -m compileall app
+    .venv/bin/python -m unittest discover -s tests
+
+    cd ../frontend
+    npm run lint
+    npm run build
+
+    cd ..
+    git diff --check
+
+No automated test makes real OpenRouter or external database calls.
+
+### 11. Manual Verification
+
+Manual verification is complete: focus persists across browser reload and backend restart; rapid focus changes persist the final selection; and a post-Finish Home refresh does not overwrite a newer focus change. Real OpenRouter/Gemini report generation works. Finish without reflection persists canonical learning, while a completed reflection persists its canonical takeaway. Recent coaching insight appears on Home. SQLite contains only canonical adviser-learning fields: no transcript, customer, report, or reflection prose is stored. The SQLite database and sidecar files remain gitignored. Known minor UI/copy polish remains assigned to Slice 5.
+
+1. Clone/configure the existing Deepgram/OpenRouter keys and start backend/frontend; confirm SQLite is created automatically.
+2. Confirm first-use Home defaults, focus changes, reload persistence, and the Recent coaching insight.
+3. Complete meetings with and without reflection and inspect SQLite rows for canonical fields only.
+4. Restart the backend and confirm focus/history survive.
+5. Force a database failure and confirm temporary session cleanup still completes.
+6. Confirm no SQLite database or sidecar files are tracked by Git.
+
+### 12. Risks / Uncertainties
+
+- The local demo adviser is intentionally single-user; authentication and multi-user access control remain out of scope.
+- SQLite is appropriate for the single-process localhost MVP, not concurrent production deployment.
+- Canonical area history intentionally omits nuanced report wording to preserve the privacy boundary.
+- Production retention and employee-data controls remain future work.
+
+### 13. Implementation Order
+
+1. Add SQLite repository initialization, schema, and ignored data path.
+2. Refactor adviser-learning tests to isolated temporary databases.
+3. Preserve private report/reflection classifications and public response boundaries.
+4. Verify Home APIs, deterministic insight derivation, completion cleanup, and idempotency.
+5. Run backend/frontend checks and perform manual restart/privacy verification.

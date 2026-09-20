@@ -81,6 +81,8 @@ class PostMeetingReport(BaseModel):
 
 class InternalReport(PostMeetingReport):
     reflection_context: str = Field(min_length=1, max_length=600)
+    strength_areas: list[CoachingArea] = Field(min_length=0, max_length=2)
+    improvement_areas: list[CoachingArea] = Field(min_length=0, max_length=2)
 
     @field_validator("reflection_context")
     @classmethod
@@ -89,6 +91,13 @@ class InternalReport(PostMeetingReport):
         if not cleaned:
             raise ValueError("Reflection context must be non-empty")
         return cleaned
+
+    @field_validator("strength_areas", "improvement_areas")
+    @classmethod
+    def unique_learning_areas(cls, value: list[CoachingArea]) -> list[CoachingArea]:
+        if len(set(value)) != len(value):
+            raise ValueError("Learning areas must be unique")
+        return value
 
 
 class ReflectionFollowUp(BaseModel):
@@ -110,6 +119,7 @@ class ReflectionCompletion(BaseModel):
 
     coach_message: str = Field(min_length=1, max_length=300)
     takeaway: str = Field(min_length=1, max_length=160)
+    takeaway_area: CoachingArea | None = Field(...)
 
     @field_validator("coach_message", "takeaway")
     @classmethod
@@ -161,6 +171,9 @@ class PostMeetingSession:
     snapshot: CompletedMeetingSnapshot
     report: PostMeetingReport | None = None
     reflection_context: str | None = None
+    strength_areas: tuple[CoachingArea, ...] = ()
+    improvement_areas: tuple[CoachingArea, ...] = ()
+    takeaway_area: CoachingArea | None = None
     reflection_messages: list[dict[str, str]] = field(default_factory=list)
     processed_reflection_requests: dict[str, ReflectionResponse] = field(default_factory=dict)
     reflection_reply_count: int = 0
@@ -257,8 +270,10 @@ and interruptions, open questions, acknowledging emotional cues, and staying wit
 before solving. Prioritize selected focus areas, but do not ignore clear evidence elsewhere.
 Use qualitative, supportive, specific language. Do not provide scores, rankings, financial advice,
 customer summaries, customer quotations, names, or customer-specific details. Never copy a quote.
-Choose at most two concise strengths and two actionable improvements. The reflection_context must
-be a short generic summary of adviser behavior, with no customer details or quotes."""
+Choose at most two concise strengths and two actionable improvements. Also classify each selected
+strength and improvement using distinct canonical coaching areas with no duplicates, using only the
+five canonical coaching area identifiers in the schema.
+The reflection_context must be a short generic summary of adviser behavior, with no customer details or quotes."""
         parsed = await self._parse(
             InternalReport,
             instructions,
@@ -368,6 +383,14 @@ be a short generic summary of adviser behavior, with no customer details or quot
         if not isinstance(decoded, dict):
             raise PostMeetingAIError("Invalid structured output")
         normalized = dict(decoded)
+        for field_name in ("strength_areas", "improvement_areas"):
+            value = normalized.get(field_name)
+            if isinstance(value, list):
+                deduplicated: list[object] = []
+                for item in value:
+                    if not any(item == existing for existing in deduplicated):
+                        deduplicated.append(item)
+                normalized[field_name] = deduplicated
         for field_name, limit in BOUNDED_TEXT_LIMITS.items():
             value = normalized.get(field_name)
             if isinstance(value, str):
@@ -444,7 +467,7 @@ def reflection_instructions(
     stage_instruction = (
         "Ask one concise, specific follow-up question that helps the adviser notice something useful beyond repeating the report."
         if stage == "follow_up"
-        else "Close the reflection warmly and provide one concise, practical adviser takeaway based on the adviser’s own intention."
+        else "Close the reflection warmly and provide one concise, practical adviser takeaway based on the adviser’s own intention. Also classify the takeaway using one canonical coaching area identifier, or null if no area can be identified."
     )
     return f"""You are a bounded private reflection coach for a financial adviser.
 {stage_instruction}
@@ -500,8 +523,14 @@ async def create_report(session_id: str) -> ReportResponse:
                 status_code=410,
                 detail={"code": "SESSION_EXPIRED", "message": "This meeting session has expired."},
             )
-        session.report = PostMeetingReport.model_validate(generated.model_dump(exclude={"reflection_context"}))
+        session.report = PostMeetingReport.model_validate(
+            generated.model_dump(
+                exclude={"reflection_context", "strength_areas", "improvement_areas"}
+            )
+        )
         session.reflection_context = generated.reflection_context
+        session.strength_areas = tuple(generated.strength_areas)
+        session.improvement_areas = tuple(generated.improvement_areas)
         return ReportResponse(report=session.report)
 
 
@@ -550,6 +579,7 @@ async def create_reflection(session_id: str, request: ReflectionRequest) -> Refl
                     complete=True,
                     takeaway=generated.takeaway,
                 )
+                session.takeaway_area = generated.takeaway_area
         except Exception as error:
             _safe_ai_error(session_id, "reflection", error)
             raise HTTPException(

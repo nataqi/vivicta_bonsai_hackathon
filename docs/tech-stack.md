@@ -185,20 +185,25 @@ Live nudge text should primarily come from the predefined application nudge libr
 
 ## Database
 
-### Supabase / PostgreSQL
+### SQLite
 
-Supabase is used for persistent adviser learning.
+Python's built-in `sqlite3` module is used for persistent adviser learning.
+SQLite was chosen for the localhost hackathon MVP to provide persistent adviser
+learning with zero external database setup for teammates. The backend creates
+`backend/data/adviser_learning.db` and its two tables automatically.
 
 Responsibilities:
 
 - selected coaching focus areas
-- generic strengths
-- generic improvement patterns
-- reflection takeaways
-- progress history
-- adviser coaching memory
+- canonical strength and improvement areas
+- optional canonical reflection takeaway area
+- bounded adviser learning history
 
-Supabase should not store:
+The application derives recurrence, qualitative progress, and the Home insight
+from at most five recent valid records; generated insight prose is not stored.
+No database credentials or external migration step is required.
+
+SQLite should not store:
 
 - raw audio
 - full transcripts
@@ -252,7 +257,9 @@ FastAPI development server
 External services:
 Deepgram
 OpenRouter / Google Gemini
-Supabase
+
+Local persistence:
+SQLite (`backend/data/adviser_learning.db`)
 ```
 
 Hosting or deployment may be added later if time allows, but it is not part of the required MVP.
@@ -301,8 +308,8 @@ AI
 - OpenRouter / Google Gemini
 
 Persistent Storage
-- Supabase
-- PostgreSQL
+- Python `sqlite3`
+- local SQLite file
 
 Temporary Meeting State
 - Backend application memory / ephemeral session state

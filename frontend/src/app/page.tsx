@@ -36,17 +36,21 @@ type PostMeetingReport = {
 };
 
 type ReflectionMessage = { author: "coach" | "advisor"; text: string };
+type HistoryState = "empty" | "ready" | "unavailable";
 
 const initialReflection: ReflectionMessage = {
   author: "coach",
   text: "How do you think the meeting went?",
 };
 
+const DEFAULT_FOCUS_AREAS: CoachingArea[] = [
+  "acknowledging_emotional_cues",
+  "stay_before_solving",
+];
+
 export default function Home() {
-  const [focusAreas, setFocusAreas] = useState<CoachingArea[]>([
-    "acknowledging_emotional_cues",
-    "stay_before_solving",
-  ]);
+  const [focusAreas, setFocusAreas] = useState<CoachingArea[]>(DEFAULT_FOCUS_AREAS);
+  const [focusHydrated, setFocusHydrated] = useState(false);
   const [phase, setPhase] = useState<Phase>("idle");
   const [report, setReport] = useState<PostMeetingReport | null>(null);
   const [reportError, setReportError] = useState<string | null>(null);
@@ -56,8 +60,17 @@ export default function Home() {
   const [reflectionDraft, setReflectionDraft] = useState("");
   const [reflectionError, setReflectionError] = useState<string | null>(null);
   const [reflectionComplete, setReflectionComplete] = useState(false);
+  const [recentInsight, setRecentInsight] = useState<string | null>(null);
+  const [historyState, setHistoryState] = useState<HistoryState>("unavailable");
+  const [focusSaveError, setFocusSaveError] = useState<string | null>(null);
   const pendingReflectionRef = useRef<{ id: string; message: string } | null>(null);
   const requestControllerRef = useRef<AbortController | null>(null);
+  const homeLoadControllerRef = useRef<AbortController | null>(null);
+  const homeLoadGenerationRef = useRef(0);
+  const focusChangeGenerationRef = useRef(0);
+  const focusSaveQueueRef = useRef<{ areas: CoachingArea[]; generation: number } | null>(null);
+  const focusSaveProcessingRef = useRef(false);
+  const focusHydratedRef = useRef(false);
   const activeSessionIdRef = useRef<string | null>(null);
 
   const {
@@ -75,6 +88,90 @@ export default function Home() {
   useEffect(() => {
     activeSessionIdRef.current = completedSessionId;
   }, [completedSessionId]);
+
+  const loadHomeLearning = useCallback(async () => {
+    const generation = ++homeLoadGenerationRef.current;
+    const focusGeneration = focusChangeGenerationRef.current;
+    homeLoadControllerRef.current?.abort();
+    const controller = new AbortController();
+    homeLoadControllerRef.current = controller;
+    try {
+      const response = await fetch(`${API_BASE}/adviser-learning/home`, { signal: controller.signal });
+      if (!response.ok) throw new Error("Learning unavailable");
+      const payload = (await response.json()) as {
+        focusAreas?: unknown;
+        recentInsight?: unknown;
+        historyState?: unknown;
+      };
+      const savedFocus = Array.isArray(payload.focusAreas)
+        ? payload.focusAreas.filter(isCoachingArea)
+        : [];
+      if (generation !== homeLoadGenerationRef.current) return;
+      if (focusChangeGenerationRef.current === focusGeneration) {
+        if (savedFocus.length) {
+          setFocusAreas(savedFocus);
+        } else if (!focusHydratedRef.current) {
+          setFocusAreas(DEFAULT_FOCUS_AREAS);
+        }
+      }
+      setRecentInsight(typeof payload.recentInsight === "string" ? payload.recentInsight : null);
+      setHistoryState(
+        payload.historyState === "empty" || payload.historyState === "ready"
+          ? payload.historyState
+          : "unavailable",
+      );
+      if (focusChangeGenerationRef.current === focusGeneration) {
+        setFocusSaveError(null);
+      }
+    } catch {
+      if (generation !== homeLoadGenerationRef.current) return;
+      setHistoryState("unavailable");
+      if (!focusHydratedRef.current && focusChangeGenerationRef.current === focusGeneration) {
+        setFocusAreas(DEFAULT_FOCUS_AREAS);
+      }
+    } finally {
+      if (generation === homeLoadGenerationRef.current) {
+        focusHydratedRef.current = true;
+        setFocusHydrated(true);
+        homeLoadControllerRef.current = null;
+      }
+    }
+  }, []);
+
+  const persistFocus = useCallback(() => {
+    if (focusSaveProcessingRef.current) return;
+    focusSaveProcessingRef.current = true;
+    void (async () => {
+      try {
+        while (focusSaveQueueRef.current) {
+          const pending = focusSaveQueueRef.current;
+          focusSaveQueueRef.current = null;
+          try {
+            const response = await fetch(`${API_BASE}/adviser-learning/focus`, {
+              method: "PUT",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ focusAreas: pending.areas }),
+            });
+            if (!response.ok) throw new Error("Focus could not be saved.");
+            if (pending.generation === focusChangeGenerationRef.current) {
+              setFocusSaveError(null);
+            }
+          } catch {
+            if (pending.generation === focusChangeGenerationRef.current) {
+              setFocusSaveError("This focus will still be used for the meeting, but could not be saved.");
+            }
+          }
+        }
+      } finally {
+        focusSaveProcessingRef.current = false;
+      }
+    })();
+  }, []);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => void loadHomeLearning(), 0);
+    return () => window.clearTimeout(timer);
+  }, [loadHomeLearning]);
 
   const requestReport = useCallback(async (sessionId: string) => {
     requestControllerRef.current?.abort();
@@ -136,15 +233,20 @@ export default function Home() {
   }, [clearCompletedSession, completedSessionId, phase, report, requestReport, status, transcriptionError]);
 
   const toggleFocus = (area: CoachingArea) => {
-    if (isActive || phase !== "idle") return;
-    setFocusAreas((current) =>
-      current.includes(area)
-        ? current.filter((item) => item !== area)
-        : [...current, area],
-    );
+    if (!focusHydrated || isActive || phase !== "idle") return;
+    const next = focusAreas.includes(area)
+      ? focusAreas.filter((item) => item !== area)
+      : [...focusAreas, area];
+    if (!next.length) return;
+    const generation = ++focusChangeGenerationRef.current;
+    setFocusAreas(next);
+    setFocusSaveError(null);
+    focusSaveQueueRef.current = { areas: next, generation };
+    persistFocus();
   };
 
   const beginMeeting = () => {
+    if (!focusHydrated) return;
     setReport(null);
     setReportError(null);
     setReflectionError(null);
@@ -167,9 +269,17 @@ export default function Home() {
       const cleanupController = new AbortController();
       const cleanupTimeout = window.setTimeout(() => cleanupController.abort(), 3_000);
       try {
-        await fetch(`${API_BASE}/post-meeting/${sessionId}`, { method: "DELETE", signal: cleanupController.signal });
+        const completion = await fetch(`${API_BASE}/post-meeting/${sessionId}/complete`, {
+          method: "POST",
+          signal: cleanupController.signal,
+        });
+        if (!completion.ok) throw new Error("Learning completion failed.");
       } catch {
-        // Frontend privacy cleanup must not depend on backend availability.
+        try {
+          await fetch(`${API_BASE}/post-meeting/${sessionId}`, { method: "DELETE" });
+        } catch {
+          // Frontend privacy cleanup must not depend on backend availability.
+        }
       } finally {
         window.clearTimeout(cleanupTimeout);
       }
@@ -183,6 +293,7 @@ export default function Home() {
     setReflectionComplete(false);
     pendingReflectionRef.current = null;
     setPhase("idle");
+    void loadHomeLearning();
   };
 
   const openReflection = () => {
@@ -277,7 +388,7 @@ export default function Home() {
     <main className="min-h-screen bg-[#f7f9ff] px-5 py-6 text-[#17234a] sm:px-8 lg:px-12">
       <div className="mx-auto flex min-h-[calc(100vh-3rem)] max-w-6xl flex-col">
         <header className="flex flex-wrap items-center justify-between gap-4"><Brand /><StatusBadge status={status} /></header>
-        {isMeeting ? <MeetingView focusAreas={focusAreas} turns={turns} currentNudge={currentNudge} status={status} error={effectiveError} onEnd={endMeeting} /> : <HomeView focusAreas={focusAreas} error={effectiveError} onToggle={toggleFocus} onStart={beginMeeting} />}
+        {isMeeting ? <MeetingView focusAreas={focusAreas} turns={turns} currentNudge={currentNudge} status={status} error={effectiveError} onEnd={endMeeting} /> : <HomeView focusAreas={focusAreas} focusHydrated={focusHydrated} error={effectiveError} recentInsight={recentInsight} historyState={historyState} focusSaveError={focusSaveError} onToggle={toggleFocus} onStart={beginMeeting} />}
       </div>
     </main>
   );
@@ -298,8 +409,9 @@ function Brand() {
   return <div className="flex items-center gap-3"><span className="grid h-11 w-11 place-items-center rounded-2xl bg-[#5146e5] text-xl font-bold text-white shadow-[0_8px_18px_rgba(81,70,229,.22)]">C</span><div><p className="text-lg font-bold tracking-tight">Compassion Coach</p><p className="text-sm font-medium text-[#687491]">Live meeting coach</p></div></div>;
 }
 
-function HomeView({ focusAreas, error, onToggle, onStart }: { focusAreas: CoachingArea[]; error: string | null; onToggle: (area: CoachingArea) => void; onStart: () => void }) {
-  return <section className="grid flex-1 items-start gap-8 py-10 lg:grid-cols-[.9fr_1.1fr]"><div className="flex flex-col items-start lg:sticky lg:top-8"><p className="text-sm font-bold tracking-[.12em] text-[#5146e5]">LIVE COACHING</p><h1 className="mt-3 max-w-xl text-4xl font-bold tracking-[-.04em] sm:text-5xl">Stay present in the conversation.</h1><p className="mt-5 max-w-lg text-lg leading-8 text-[#5d6884]">Choose what you want to practise. The coach listens quietly and steps in only when useful.</p><fieldset className="mt-7 max-w-xl"><legend className="text-sm font-bold text-[#34405f]">Coaching focus</legend><div className="mt-3 flex flex-wrap gap-2">{COACHING_AREAS.map((area) => { const selected = focusAreas.includes(area.value); return <button key={area.value} type="button" aria-pressed={selected} onClick={() => onToggle(area.value)} className={`rounded-full border px-3.5 py-2 text-sm font-semibold transition ${selected ? "border-[#7770e8] bg-[#eceaff] text-[#332b9d]" : "border-[#dfe4f3] bg-white text-[#65708d] hover:border-[#b9b5f6]"}`}>{area.label}</button>; })}</div></fieldset><div className="mt-8 flex flex-wrap items-center gap-3"><button type="button" onClick={onStart} className="inline-flex min-h-13 items-center justify-center rounded-2xl bg-[#5146e5] px-6 text-base font-semibold text-white shadow-[0_10px_22px_rgba(81,70,229,.24)] transition hover:bg-[#4338ca] focus:outline-none focus:ring-4 focus:ring-[#c9c5ff]">Start meeting</button><p className="text-sm font-medium text-[#707c98]">Ready when you are.</p></div>{error && <div role="alert" className="mt-5 max-w-lg rounded-2xl border border-[#f4c5b6] bg-[#fff3ef] px-4 py-3 text-sm font-semibold leading-6 text-[#8b452f]">{error}</div>}<div className="mt-8 flex w-full max-w-lg items-center gap-4 rounded-2xl border border-[#dfe4f3] bg-white px-4 py-3 shadow-sm"><span className="grid h-12 w-12 place-items-center rounded-full bg-[#eef0f7] text-xl text-[#75819e]" aria-hidden="true">◉</span><div><p className="font-bold text-[#34405f]">Microphone inactive</p><p className="mt-0.5 text-sm text-[#707c98]">Audio, transcript, and coaching context are temporary.</p></div></div></div><section className="rounded-[1.7rem] border border-[#cedcff] bg-[#eaf1ff] p-6 shadow-[0_18px_45px_rgba(81,70,229,.08)] sm:p-7"><p className="text-sm font-bold tracking-[.1em] text-[#3557b7]">YOUR PRIVATE COACH</p><p className="mt-3 text-xl font-bold leading-8 text-[#1e315e]">The session stays focused on how you communicate, so you can make one useful adjustment at a time.</p><div className="mt-5 border-t border-[#cad8f5] pt-4"><p className="text-sm font-bold text-[#344a80]">Choose a focus</p><p className="mt-1 text-base leading-7 text-[#435a83]">Your selections guide live prompts and the short report after the conversation.</p></div></section></section>;
+function HomeView({ focusAreas, focusHydrated, error, recentInsight, historyState, focusSaveError, onToggle, onStart }: { focusAreas: CoachingArea[]; focusHydrated: boolean; error: string | null; recentInsight: string | null; historyState: HistoryState; focusSaveError: string | null; onToggle: (area: CoachingArea) => void; onStart: () => void }) {
+  const insight = recentInsight ?? (historyState === "empty" ? "Complete a meeting to create your first coaching insight." : "Recent coaching insight is unavailable right now.");
+  return <section className="grid flex-1 items-start gap-8 py-10 lg:grid-cols-[.9fr_1.1fr]"><div className="flex flex-col items-start lg:sticky lg:top-8"><p className="text-sm font-bold tracking-[.12em] text-[#5146e5]">LIVE COACHING</p><h1 className="mt-3 max-w-xl text-4xl font-bold tracking-[-.04em] sm:text-5xl">Stay present in the conversation.</h1><p className="mt-5 max-w-lg text-lg leading-8 text-[#5d6884]">Choose what you want to practise. The coach listens quietly and steps in only when useful.</p><fieldset className="mt-7 max-w-xl" disabled={!focusHydrated} aria-busy={!focusHydrated}><legend className="text-sm font-bold text-[#34405f]">Coaching focus</legend><div className="mt-3 flex flex-wrap gap-2">{COACHING_AREAS.map((area) => { const selected = focusHydrated && focusAreas.includes(area.value); return <button key={area.value} type="button" aria-pressed={selected} onClick={() => onToggle(area.value)} className={`rounded-full border px-3.5 py-2 text-sm font-semibold transition disabled:cursor-wait disabled:opacity-50 ${selected ? "border-[#7770e8] bg-[#eceaff] text-[#332b9d]" : "border-[#dfe4f3] bg-white text-[#65708d] hover:border-[#b9b5f6]"}`}>{area.label}</button>; })}</div></fieldset><div className="mt-8 flex flex-wrap items-center gap-3"><button type="button" onClick={onStart} disabled={!focusHydrated} className="inline-flex min-h-13 items-center justify-center rounded-2xl bg-[#5146e5] px-6 text-base font-semibold text-white shadow-[0_10px_22px_rgba(81,70,229,.24)] transition hover:bg-[#4338ca] focus:outline-none focus:ring-4 focus:ring-[#c9c5ff] disabled:cursor-wait disabled:opacity-50">{focusHydrated ? "Start meeting" : "Loading focus…"}</button><p className="text-sm font-medium text-[#707c98]">{focusHydrated ? "Ready when you are." : "Loading your saved focus."}</p></div>{(error || focusSaveError) && <div role="alert" className="mt-5 max-w-lg rounded-2xl border border-[#f4c5b6] bg-[#fff3ef] px-4 py-3 text-sm font-semibold leading-6 text-[#8b452f]">{error ?? focusSaveError}</div>}<div className="mt-8 flex w-full max-w-lg items-center gap-4 rounded-2xl border border-[#dfe4f3] bg-white px-4 py-3 shadow-sm"><span className="grid h-12 w-12 place-items-center rounded-full bg-[#eef0f7] text-xl text-[#75819e]" aria-hidden="true">◉</span><div><p className="font-bold text-[#34405f]">Microphone inactive</p><p className="mt-0.5 text-sm text-[#707c98]">Audio, transcript, and coaching context are temporary.</p></div></div></div><section className="rounded-[1.7rem] border border-[#cedcff] bg-[#eaf1ff] p-6 shadow-[0_18px_45px_rgba(81,70,229,.08)] sm:p-7"><p className="text-sm font-bold tracking-[.1em] text-[#3557b7]">YOUR PRIVATE COACH</p><p className="mt-3 text-xl font-bold leading-8 text-[#1e315e]">The session stays focused on how you communicate, so you can make one useful adjustment at a time.</p><div className="mt-5 border-t border-[#cad8f5] pt-4"><p className="text-sm font-bold text-[#344a80]">Recent coaching insight</p><p className="mt-1 text-base leading-7 text-[#435a83]">{insight}</p></div></section></section>;
 }
 
 function MeetingView({ focusAreas, turns, currentNudge, status, error, onEnd }: { focusAreas: CoachingArea[]; turns: ReturnType<typeof useLiveTranscription>["turns"]; currentNudge: ReturnType<typeof useLiveTranscription>["currentNudge"]; status: TranscriptionStatus; error: string | null; onEnd: () => void }) {
@@ -343,6 +455,10 @@ function statusLabel(status: TranscriptionStatus) {
 
 function labelForArea(area: CoachingArea) {
   return COACHING_AREAS.find((item) => item.value === area)?.label ?? area;
+}
+
+function isCoachingArea(value: unknown): value is CoachingArea {
+  return typeof value === "string" && COACHING_AREAS.some((area) => area.value === value);
 }
 
 function formatTimestamp(milliseconds: number) {

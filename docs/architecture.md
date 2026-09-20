@@ -561,6 +561,13 @@ This learning may be used in future sessions.
 
 The goal is for the coach to remember the adviser, not the customer's conversation.
 
+Slice 4 stores only canonical coaching facts in a local SQLite database: the
+stable demo adviser's selected focus, per-session strength and improvement
+areas, and an optional canonical reflection takeaway area. Recurrence, progress,
+and the Home insight are derived deterministically from at most five recent valid
+records and are not stored as generated prose. SQLite is initialized
+automatically so the localhost MVP needs no external database setup.
+
 ---
 
 # Data Lifecycle
@@ -676,9 +683,13 @@ Used for:
 - reflection takeaways
 - progress history
 
-For the hackathon MVP, persistent adviser learning will be stored in Supabase / Postgres.
+For the hackathon MVP, persistent adviser learning is stored in a local SQLite
+file created automatically by the backend. SQLite was chosen for the localhost
+hackathon MVP to provide persistent adviser learning with zero external
+database setup for teammates.
 
-Supabase should not receive meeting transcripts or raw customer audio.
+The SQLite repository should never receive meeting transcripts or raw customer
+audio.
 
 ---
 
@@ -843,7 +854,7 @@ OpenRouter / Gemini
 → reflection coaching
 → adviser learning extraction
 
-Supabase / Postgres
+SQLite
 → persistent adviser learning
 → coaching history
 → selected focus areas

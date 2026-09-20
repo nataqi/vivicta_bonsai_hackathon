@@ -68,6 +68,8 @@ class CapturingCompletions:
                 focus_summary="Stay with emotional cues before solving.",
                 takeaway="Pause, acknowledge, then solve.",
                 reflection_context="The adviser can practise acknowledging concerns before solutions.",
+                strength_areas=[CoachingArea.OPEN_QUESTIONS],
+                improvement_areas=[CoachingArea.STAY_BEFORE_SOLVING],
             )
         elif schema_name == "reflectionfollowup":
             parsed = post_meeting.ReflectionFollowUp(
@@ -77,6 +79,7 @@ class CapturingCompletions:
             parsed = post_meeting.ReflectionCompletion(
                 coach_message="That sounds like a useful intention to carry forward.",
                 takeaway="Pause and acknowledge before solving.",
+                takeaway_area=CoachingArea.STAY_BEFORE_SOLVING,
             )
         return SimpleNamespace(
             choices=[SimpleNamespace(message=SimpleNamespace(content=parsed.model_dump_json()))]
@@ -112,6 +115,8 @@ class BlockingAI:
             focus_summary="A focus.",
             takeaway="A takeaway.",
             reflection_context="A bounded context.",
+            strength_areas=[CoachingArea.OPEN_QUESTIONS],
+            improvement_areas=[CoachingArea.STAY_BEFORE_SOLVING],
         )
 
 
@@ -168,11 +173,17 @@ class PostMeetingTests(unittest.IsolatedAsyncioTestCase):
         second = await post_meeting.create_report(session_id)
 
         self.assertEqual(first.report.takeaway, "Pause, acknowledge, then solve.")
+        self.assertNotIn("strength_areas", first.report.model_dump())
+        self.assertNotIn("improvement_areas", first.report.model_dump())
         self.assertEqual(first.model_dump(), second.model_dump())
         self.assertEqual(len(completions.calls), 1)
         self.assertEqual(completions.calls[0]["model"], OPENROUTER_MODEL)
         self.assertEqual(completions.calls[0]["max_tokens"], 800)
         self.assertEqual(completions.calls[0]["response_format"]["type"], "json_schema")
+        self.assertIn(
+            "distinct canonical coaching areas with no duplicates",
+            completions.calls[0]["messages"][0]["content"],
+        )
 
     async def test_client_uses_openrouter_key_and_never_falls_back_to_openai(self) -> None:
         with patch.dict(
@@ -256,7 +267,7 @@ class PostMeetingTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertIn("string_type", diagnostic)
         self.assertIn("focus_summary", diagnostic)
-        self.assertIn("count=1", diagnostic)
+        self.assertIn("count=3", diagnostic)
         self.assertNotIn("CUSTOMER SECRET", diagnostic)
         self.assertIsNone(post_meeting.store.get(session_id).report)
 
@@ -267,6 +278,8 @@ class PostMeetingTests(unittest.IsolatedAsyncioTestCase):
             "focus_summary": "f" * 260,
             "takeaway": "t" * 200,
             "reflection_context": "r" * 700,
+            "strength_areas": [CoachingArea.OPEN_QUESTIONS.value],
+            "improvement_areas": [CoachingArea.STAY_BEFORE_SOLVING.value],
         }
         post_meeting._ai_service = post_meeting.PostMeetingAI(
             SimpleNamespace(
@@ -285,6 +298,74 @@ class PostMeetingTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(response.report.focus_summary), 220)
         self.assertEqual(len(response.report.takeaway), 160)
         self.assertEqual(len(post_meeting.store.get(session_id).reflection_context), 600)
+
+    async def test_duplicate_canonical_learning_areas_are_deduplicated_in_order(self) -> None:
+        duplicate_report = {
+            "strengths": ["A strength."],
+            "improvements": ["An improvement."],
+            "focus_summary": "A focus.",
+            "takeaway": "A takeaway.",
+            "reflection_context": "A bounded context.",
+            "strength_areas": [
+                CoachingArea.OPEN_QUESTIONS.value,
+                CoachingArea.OPEN_QUESTIONS.value,
+                CoachingArea.STAY_BEFORE_SOLVING.value,
+            ],
+            "improvement_areas": [
+                CoachingArea.STAY_BEFORE_SOLVING.value,
+                CoachingArea.STAY_BEFORE_SOLVING.value,
+                CoachingArea.OPEN_QUESTIONS.value,
+            ],
+        }
+        post_meeting._ai_service = post_meeting.PostMeetingAI(
+            SimpleNamespace(
+                chat=SimpleNamespace(
+                    completions=FixedContentCompletions(json.dumps(duplicate_report))
+                )
+            )
+        )
+        session_id = str(uuid4())
+        post_meeting.store.register(session_id, meeting_data())
+
+        response = await post_meeting.create_report(session_id)
+        session = post_meeting.store.get(session_id)
+
+        self.assertNotIn("strength_areas", response.report.model_dump())
+        self.assertNotIn("improvement_areas", response.report.model_dump())
+        self.assertEqual(
+            session.strength_areas,
+            (CoachingArea.OPEN_QUESTIONS, CoachingArea.STAY_BEFORE_SOLVING),
+        )
+        self.assertEqual(
+            session.improvement_areas,
+            (CoachingArea.STAY_BEFORE_SOLVING, CoachingArea.OPEN_QUESTIONS),
+        )
+
+    async def test_invalid_canonical_learning_area_still_fails_validation(self) -> None:
+        invalid_report = {
+            "strengths": ["A strength."],
+            "improvements": ["An improvement."],
+            "focus_summary": "A focus.",
+            "takeaway": "A takeaway.",
+            "reflection_context": "A bounded context.",
+            "strength_areas": ["not_a_coaching_area"],
+            "improvement_areas": [CoachingArea.STAY_BEFORE_SOLVING.value],
+        }
+        post_meeting._ai_service = post_meeting.PostMeetingAI(
+            SimpleNamespace(
+                chat=SimpleNamespace(
+                    completions=FixedContentCompletions(json.dumps(invalid_report))
+                )
+            )
+        )
+        session_id = str(uuid4())
+        post_meeting.store.register(session_id, meeting_data())
+
+        with self.assertRaises(HTTPException) as failure:
+            await post_meeting.create_report(session_id)
+
+        self.assertEqual(failure.exception.status_code, 503)
+        self.assertIsNone(post_meeting.store.get(session_id).report)
 
     async def test_structurally_invalid_report_json_remains_recoverable(self) -> None:
         invalid_report = {
