@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 const AUDIO_MIME_TYPE = "audio/webm;codecs=opus";
 const TRANSCRIPTION_URL = "ws://localhost:8001/ws/transcription";
+const FINALIZATION_TIMEOUT_MS = 10_000;
 
 export type SpeakerTurn = {
   id: string;
@@ -89,12 +90,15 @@ export function useLiveTranscription() {
   const acceptVisibleLiveContentRef = useRef(false);
   const acceptSessionTurnsRef = useRef(false);
   const nudgeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const finalizationTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const clearLiveContent = useCallback(() => {
     setTurns([]);
     setCurrentNudge(null);
     if (nudgeTimerRef.current) clearTimeout(nudgeTimerRef.current);
     nudgeTimerRef.current = null;
+    if (finalizationTimerRef.current) clearTimeout(finalizationTimerRef.current);
+    finalizationTimerRef.current = null;
   }, []);
 
   const disposeSession = useCallback((closeSocket = true) => {
@@ -194,6 +198,9 @@ export function useLiveTranscription() {
       acceptVisibleLiveContentRef.current = false;
       acceptSessionTurnsRef.current = false;
       disposeSession();
+      clearLiveContent();
+      setSessionTurns([]);
+      setCompletedSessionId(null);
       setError(message);
       setStatus("error");
     };
@@ -306,15 +313,23 @@ export function useLiveTranscription() {
   }, [clearLiveContent, disposeSession]);
 
   const clearCompletedSession = useCallback(() => {
+    generationRef.current += 1;
+    expectedCloseRef.current = true;
+    stopRequestedRef.current = false;
+    acceptVisibleLiveContentRef.current = false;
+    acceptSessionTurnsRef.current = false;
+    disposeSession();
     setSessionTurns([]);
     setCompletedSessionId(null);
     setError(null);
     clearLiveContent();
-  }, [clearLiveContent]);
+    setStatus("idle");
+  }, [clearLiveContent, disposeSession]);
 
   const stop = useCallback(() => {
     const recorder = recorderRef.current;
     const websocket = websocketRef.current;
+    const generation = generationRef.current;
 
     if (!streamRef.current && !websocket && !recorder) {
       generationRef.current += 1;
@@ -331,12 +346,29 @@ export function useLiveTranscription() {
     clearLiveContent();
     setStatus("stopping");
 
+    const armFinalizationTimeout = () => {
+      if (finalizationTimerRef.current) clearTimeout(finalizationTimerRef.current);
+      finalizationTimerRef.current = setTimeout(() => {
+        if (!mountedRef.current || generation !== generationRef.current) return;
+        generationRef.current += 1;
+        expectedCloseRef.current = true;
+        acceptSessionTurnsRef.current = false;
+        disposeSession();
+        clearLiveContent();
+        setSessionTurns([]);
+        setCompletedSessionId(null);
+        setError("The meeting took too long to finalize. Return home and start a new meeting.");
+        setStatus("error");
+      }, FINALIZATION_TIMEOUT_MS);
+    };
+
     const sendStop = async () => {
       await sendChainRef.current;
       if (websocketRef.current !== websocket) return;
       streamRef.current?.getTracks().forEach((track) => track.stop());
       if (websocket?.readyState === WebSocket.OPEN) {
         websocket.send(JSON.stringify({ type: "stop" }));
+        armFinalizationTimeout();
       } else {
         expectedCloseRef.current = true;
         disposeSession();

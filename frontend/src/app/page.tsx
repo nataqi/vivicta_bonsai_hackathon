@@ -11,10 +11,10 @@ const API_BASE = "http://localhost:8001";
 
 const COACHING_AREAS: { value: CoachingArea; label: string }[] = [
   { value: "pace_and_pauses", label: "Pace & pauses" },
-  { value: "turn_taking_and_interruptions", label: "Turn-taking" },
+  { value: "turn_taking_and_interruptions", label: "Turn-taking & interruptions" },
   { value: "open_questions", label: "Open questions" },
-  { value: "acknowledging_emotional_cues", label: "Acknowledge emotion" },
-  { value: "stay_before_solving", label: "Stay before solving" },
+  { value: "acknowledging_emotional_cues", label: "Acknowledging emotional cues" },
+  { value: "stay_before_solving", label: "Stay with the customer before solving" },
 ];
 
 type Phase =
@@ -25,8 +25,7 @@ type Phase =
   | "preparing_report"
   | "report"
   | "report_error"
-  | "reflection"
-  | "finishing";
+  | "reflection";
 
 type PostMeetingReport = {
   strengths: string[];
@@ -60,10 +59,15 @@ export default function Home() {
   const [reflectionDraft, setReflectionDraft] = useState("");
   const [reflectionError, setReflectionError] = useState<string | null>(null);
   const [reflectionComplete, setReflectionComplete] = useState(false);
+  const [reflectionPending, setReflectionPending] = useState(false);
+  const [finishPending, setFinishPending] = useState(false);
+  const [learningWarning, setLearningWarning] = useState<string | null>(null);
   const [recentInsight, setRecentInsight] = useState<string | null>(null);
   const [historyState, setHistoryState] = useState<HistoryState>("unavailable");
   const [focusSaveError, setFocusSaveError] = useState<string | null>(null);
   const pendingReflectionRef = useRef<{ id: string; message: string } | null>(null);
+  const reflectionPendingRef = useRef(false);
+  const finishPendingRef = useRef(false);
   const requestControllerRef = useRef<AbortController | null>(null);
   const homeLoadControllerRef = useRef<AbortController | null>(null);
   const homeLoadGenerationRef = useRef(0);
@@ -213,8 +217,8 @@ export default function Home() {
     if (status === "stopped" && !completedSessionId && phase === "finalizing") {
       timers.push(window.setTimeout(() => setPhase("idle"), 0));
     }
-    if (status === "error" && phase === "finalizing") {
-      const message = transcriptionError ?? "The meeting could not be finalized. Please try again.";
+    if (status === "error" && (phase === "starting" || phase === "listening" || phase === "finalizing")) {
+      const message = transcriptionError ?? "The meeting could not continue. Please try again.";
       timers.push(
         window.setTimeout(() => {
           clearCompletedSession();
@@ -224,6 +228,8 @@ export default function Home() {
           setReflectionDraft("");
           setReflectionError(null);
           setReflectionComplete(false);
+          setReflectionPending(false);
+          reflectionPendingRef.current = false;
           pendingReflectionRef.current = null;
           setPhase("idle");
         }, 0),
@@ -251,6 +257,9 @@ export default function Home() {
     setReportError(null);
     setReflectionError(null);
     setReflectionComplete(false);
+    setReflectionPending(false);
+    reflectionPendingRef.current = false;
+    setLearningWarning(null);
     setPhase("starting");
     void start(focusAreas);
   };
@@ -260,28 +269,62 @@ export default function Home() {
     stop();
   };
 
+  const abandonMeeting = () => {
+    activeSessionIdRef.current = null;
+    requestControllerRef.current?.abort();
+    requestControllerRef.current = null;
+    clearCompletedSession();
+    setReport(null);
+    setReportError(null);
+    setReflectionMessages([initialReflection]);
+    setReflectionDraft("");
+    setReflectionError(null);
+    setReflectionComplete(false);
+    setReflectionPending(false);
+    reflectionPendingRef.current = false;
+    pendingReflectionRef.current = null;
+    setFinishPending(false);
+    finishPendingRef.current = false;
+    setPhase("idle");
+  };
+
   const finish = async () => {
+    if (finishPendingRef.current) return;
+    finishPendingRef.current = true;
     const sessionId = completedSessionId;
     activeSessionIdRef.current = null;
     requestControllerRef.current?.abort();
-    setPhase("finishing");
+    requestControllerRef.current = null;
+    setFinishPending(true);
+    setReflectionPending(false);
+    let learningSaved = true;
     if (sessionId) {
-      const cleanupController = new AbortController();
-      const cleanupTimeout = window.setTimeout(() => cleanupController.abort(), 3_000);
+      const completionController = new AbortController();
+      const completionTimeout = window.setTimeout(() => completionController.abort(), 5_000);
       try {
         const completion = await fetch(`${API_BASE}/post-meeting/${sessionId}/complete`, {
           method: "POST",
-          signal: cleanupController.signal,
+          signal: completionController.signal,
         });
         if (!completion.ok) throw new Error("Learning completion failed.");
+        const payload = (await completion.json()) as { learningSaved?: boolean };
+        learningSaved = payload.learningSaved === true;
       } catch {
+        learningSaved = false;
+        const deleteController = new AbortController();
+        const deleteTimeout = window.setTimeout(() => deleteController.abort(), 5_000);
         try {
-          await fetch(`${API_BASE}/post-meeting/${sessionId}`, { method: "DELETE" });
+          await fetch(`${API_BASE}/post-meeting/${sessionId}`, {
+            method: "DELETE",
+            signal: deleteController.signal,
+          });
         } catch {
           // Frontend privacy cleanup must not depend on backend availability.
+        } finally {
+          window.clearTimeout(deleteTimeout);
         }
       } finally {
-        window.clearTimeout(cleanupTimeout);
+        window.clearTimeout(completionTimeout);
       }
     }
     clearCompletedSession();
@@ -291,7 +334,16 @@ export default function Home() {
     setReflectionDraft("");
     setReflectionError(null);
     setReflectionComplete(false);
+    setReflectionPending(false);
+    reflectionPendingRef.current = false;
     pendingReflectionRef.current = null;
+    setFinishPending(false);
+    finishPendingRef.current = false;
+    setLearningWarning(
+      learningSaved
+        ? null
+        : "This meeting was cleared, but its coaching insight may not have been saved.",
+    );
     setPhase("idle");
     void loadHomeLearning();
   };
@@ -301,13 +353,16 @@ export default function Home() {
     setReflectionDraft("");
     setReflectionError(null);
     setReflectionComplete(false);
+    setReflectionPending(false);
+    reflectionPendingRef.current = false;
     pendingReflectionRef.current = null;
     setPhase("reflection");
   };
 
   const sendReflection = async () => {
     const message = reflectionDraft.trim();
-    if (!message || !completedSessionId || reflectionComplete) return;
+    if (!message || !completedSessionId || reflectionComplete || reflectionPendingRef.current) return;
+    reflectionPendingRef.current = true;
     const pending = pendingReflectionRef.current;
     const messageId = pending?.message === message ? pending.id : crypto.randomUUID();
     pendingReflectionRef.current = { id: messageId, message };
@@ -316,6 +371,7 @@ export default function Home() {
     const controller = new AbortController();
     requestControllerRef.current = controller;
     const timeout = window.setTimeout(() => controller.abort(), 15_000);
+    setReflectionPending(true);
     try {
       const response = await fetch(
         `${API_BASE}/post-meeting/${completedSessionId}/reflection`,
@@ -360,6 +416,8 @@ export default function Home() {
     } finally {
       window.clearTimeout(timeout);
       if (requestControllerRef.current === controller) requestControllerRef.current = null;
+      reflectionPendingRef.current = false;
+      setReflectionPending(false);
     }
   };
 
@@ -371,24 +429,23 @@ export default function Home() {
       : null;
 
   if (phase === "preparing_report" || phase === "finalizing") {
-    return <TransitionScreen finalizing={phase === "finalizing"} />;
+    return <TransitionScreen />;
   }
   if (phase === "report" && report) {
-    return <ReportView report={report} onReflect={openReflection} onFinish={() => void finish()} />;
+    return <ReportView report={report} finishing={finishPending} onReflect={openReflection} onFinish={() => void finish()} />;
   }
   if (phase === "report_error") {
-    return <ReportErrorView message={reportError ?? "Feedback could not be prepared."} onRetry={() => completedSessionId && void requestReport(completedSessionId)} onFinish={() => void finish()} />;
+    return <ReportErrorView message={reportError ?? "Feedback could not be prepared."} finishing={finishPending} onRetry={() => completedSessionId && void requestReport(completedSessionId)} onFinish={() => void finish()} />;
   }
   if (phase === "reflection" && report) {
-    return <ReflectionView messages={reflectionMessages} draft={reflectionDraft} error={reflectionError} complete={reflectionComplete} onDraftChange={setReflectionDraft} onSend={() => void sendReflection()} onBack={() => setPhase("report")} onFinish={() => void finish()} />;
+    return <ReflectionView messages={reflectionMessages} draft={reflectionDraft} error={reflectionError} complete={reflectionComplete} sending={reflectionPending} finishing={finishPending} onDraftChange={setReflectionDraft} onSend={() => void sendReflection()} onBack={() => setPhase("report")} onFinish={() => void finish()} />;
   }
-  if (phase === "finishing") return <TransitionScreen finalizing={false} finishing />;
 
   return (
     <main className="min-h-screen bg-[#f7f9ff] px-5 py-6 text-[#17234a] sm:px-8 lg:px-12">
       <div className="mx-auto flex min-h-[calc(100vh-3rem)] max-w-6xl flex-col">
-        <header className="flex flex-wrap items-center justify-between gap-4"><Brand /><StatusBadge status={status} /></header>
-        {isMeeting ? <MeetingView focusAreas={focusAreas} turns={turns} currentNudge={currentNudge} status={status} error={effectiveError} onEnd={endMeeting} /> : <HomeView focusAreas={focusAreas} focusHydrated={focusHydrated} error={effectiveError} recentInsight={recentInsight} historyState={historyState} focusSaveError={focusSaveError} onToggle={toggleFocus} onStart={beginMeeting} />}
+        <header className="flex flex-wrap items-center justify-between gap-4"><Brand />{isMeeting && <div className="flex items-center gap-3"><button type="button" onClick={abandonMeeting} className="rounded-xl px-3 py-2 text-sm font-semibold text-[#65708d] transition hover:bg-white hover:text-[#34405f] focus:outline-none focus:ring-4 focus:ring-[#e5e3ff]">← Home</button><StatusBadge status={status} /></div>}</header>
+        {isMeeting ? <MeetingView focusAreas={focusAreas} turns={turns} currentNudge={currentNudge} status={status} error={effectiveError} onEnd={endMeeting} /> : <HomeView focusAreas={focusAreas} focusHydrated={focusHydrated} error={effectiveError} recentInsight={recentInsight} historyState={historyState} focusSaveError={focusSaveError} learningWarning={learningWarning} onToggle={toggleFocus} onStart={beginMeeting} />}
       </div>
     </main>
   );
@@ -406,38 +463,40 @@ async function readApiError(response: Response): Promise<string> {
 }
 
 function Brand() {
-  return <div className="flex items-center gap-3"><span className="grid h-11 w-11 place-items-center rounded-2xl bg-[#5146e5] text-xl font-bold text-white shadow-[0_8px_18px_rgba(81,70,229,.22)]">C</span><div><p className="text-lg font-bold tracking-tight">Compassion Coach</p><p className="text-sm font-medium text-[#687491]">Live meeting coach</p></div></div>;
+  return <div className="flex items-center gap-3"><span className="grid h-11 w-11 place-items-center rounded-2xl bg-[#5146e5] text-xl font-bold text-white shadow-[0_8px_18px_rgba(81,70,229,.22)]">C</span><p className="text-lg font-bold tracking-tight">Compassion Coach</p></div>;
 }
 
-function HomeView({ focusAreas, focusHydrated, error, recentInsight, historyState, focusSaveError, onToggle, onStart }: { focusAreas: CoachingArea[]; focusHydrated: boolean; error: string | null; recentInsight: string | null; historyState: HistoryState; focusSaveError: string | null; onToggle: (area: CoachingArea) => void; onStart: () => void }) {
-  const insight = recentInsight ?? (historyState === "empty" ? "Complete a meeting to create your first coaching insight." : "Recent coaching insight is unavailable right now.");
-  return <section className="grid flex-1 items-start gap-8 py-10 lg:grid-cols-[.9fr_1.1fr]"><div className="flex flex-col items-start lg:sticky lg:top-8"><p className="text-sm font-bold tracking-[.12em] text-[#5146e5]">LIVE COACHING</p><h1 className="mt-3 max-w-xl text-4xl font-bold tracking-[-.04em] sm:text-5xl">Stay present in the conversation.</h1><p className="mt-5 max-w-lg text-lg leading-8 text-[#5d6884]">Choose what you want to practise. The coach listens quietly and steps in only when useful.</p><fieldset className="mt-7 max-w-xl" disabled={!focusHydrated} aria-busy={!focusHydrated}><legend className="text-sm font-bold text-[#34405f]">Coaching focus</legend><div className="mt-3 flex flex-wrap gap-2">{COACHING_AREAS.map((area) => { const selected = focusHydrated && focusAreas.includes(area.value); return <button key={area.value} type="button" aria-pressed={selected} onClick={() => onToggle(area.value)} className={`rounded-full border px-3.5 py-2 text-sm font-semibold transition disabled:cursor-wait disabled:opacity-50 ${selected ? "border-[#7770e8] bg-[#eceaff] text-[#332b9d]" : "border-[#dfe4f3] bg-white text-[#65708d] hover:border-[#b9b5f6]"}`}>{area.label}</button>; })}</div></fieldset><div className="mt-8 flex flex-wrap items-center gap-3"><button type="button" onClick={onStart} disabled={!focusHydrated} className="inline-flex min-h-13 items-center justify-center rounded-2xl bg-[#5146e5] px-6 text-base font-semibold text-white shadow-[0_10px_22px_rgba(81,70,229,.24)] transition hover:bg-[#4338ca] focus:outline-none focus:ring-4 focus:ring-[#c9c5ff] disabled:cursor-wait disabled:opacity-50">{focusHydrated ? "Start meeting" : "Loading focus…"}</button><p className="text-sm font-medium text-[#707c98]">{focusHydrated ? "Ready when you are." : "Loading your saved focus."}</p></div>{(error || focusSaveError) && <div role="alert" className="mt-5 max-w-lg rounded-2xl border border-[#f4c5b6] bg-[#fff3ef] px-4 py-3 text-sm font-semibold leading-6 text-[#8b452f]">{error ?? focusSaveError}</div>}<div className="mt-8 flex w-full max-w-lg items-center gap-4 rounded-2xl border border-[#dfe4f3] bg-white px-4 py-3 shadow-sm"><span className="grid h-12 w-12 place-items-center rounded-full bg-[#eef0f7] text-xl text-[#75819e]" aria-hidden="true">◉</span><div><p className="font-bold text-[#34405f]">Microphone inactive</p><p className="mt-0.5 text-sm text-[#707c98]">Audio, transcript, and coaching context are temporary.</p></div></div></div><section className="rounded-[1.7rem] border border-[#cedcff] bg-[#eaf1ff] p-6 shadow-[0_18px_45px_rgba(81,70,229,.08)] sm:p-7"><p className="text-sm font-bold tracking-[.1em] text-[#3557b7]">YOUR PRIVATE COACH</p><p className="mt-3 text-xl font-bold leading-8 text-[#1e315e]">The session stays focused on how you communicate, so you can make one useful adjustment at a time.</p><div className="mt-5 border-t border-[#cad8f5] pt-4"><p className="text-sm font-bold text-[#344a80]">Recent coaching insight</p><p className="mt-1 text-base leading-7 text-[#435a83]">{insight}</p></div></section></section>;
+function HomeView({ focusAreas, focusHydrated, error, recentInsight, historyState, focusSaveError, learningWarning, onToggle, onStart }: { focusAreas: CoachingArea[]; focusHydrated: boolean; error: string | null; recentInsight: string | null; historyState: HistoryState; focusSaveError: string | null; learningWarning: string | null; onToggle: (area: CoachingArea) => void; onStart: () => void }) {
+  const insight = focusHydrated
+    ? recentInsight ?? (historyState === "empty" ? "Complete a meeting to create your first coaching insight." : "Recent coaching insight is unavailable right now.")
+    : null;
+  return <section className="grid flex-1 items-start gap-8 py-10 lg:grid-cols-[1.05fr_.95fr]"><div className="flex flex-col items-start lg:sticky lg:top-8"><h1 className="max-w-xl text-4xl font-bold tracking-[-.04em] sm:text-5xl">Stay present in the conversation.</h1><p className="mt-5 max-w-lg text-lg leading-8 text-[#5d6884]">Choose what you want to practise. Your coach listens quietly and steps in only when useful.</p><fieldset className="mt-7 max-w-xl" disabled={!focusHydrated} aria-busy={!focusHydrated}><legend className="text-sm font-bold text-[#34405f]">Coaching focus</legend><div className="mt-3 flex flex-wrap gap-2">{COACHING_AREAS.map((area) => { const selected = focusHydrated && focusAreas.includes(area.value); return <button key={area.value} type="button" aria-pressed={selected} onClick={() => onToggle(area.value)} className={`rounded-full border px-3.5 py-2 text-sm font-semibold transition disabled:cursor-wait disabled:opacity-50 ${selected ? "border-[#7770e8] bg-[#eceaff] text-[#332b9d]" : "border-[#dfe4f3] bg-white text-[#65708d] hover:border-[#b9b5f6]"}`}>{area.label}</button>; })}</div></fieldset><button type="button" onClick={onStart} disabled={!focusHydrated} className="mt-8 inline-flex min-h-13 items-center justify-center rounded-2xl bg-[#5146e5] px-6 text-base font-semibold text-white shadow-[0_10px_22px_rgba(81,70,229,.24)] transition hover:bg-[#4338ca] focus:outline-none focus:ring-4 focus:ring-[#c9c5ff] disabled:cursor-wait disabled:opacity-50">Start meeting</button>{(error || focusSaveError) && <div role="alert" className="mt-5 max-w-lg rounded-2xl border border-[#f4c5b6] bg-[#fff3ef] px-4 py-3 text-sm font-semibold leading-6 text-[#8b452f]">{error ?? focusSaveError}</div>}{learningWarning && <p role="status" className="mt-4 max-w-lg text-sm font-medium leading-6 text-[#7b5a36]">{learningWarning}</p>}<p className="mt-7 text-sm leading-6 text-[#707c98]">Conversation audio, transcript, and customer details are temporary.</p></div><section className="min-h-36 rounded-[1.5rem] border border-[#cedcff] bg-[#eaf1ff] p-5 shadow-[0_18px_45px_rgba(81,70,229,.08)]"><p className="text-sm font-bold text-[#344a80]">Recent coaching insight</p><p className="mt-2 min-h-14 text-base leading-7 text-[#435a83]">{insight}</p></section></section>;
 }
 
 function MeetingView({ focusAreas, turns, currentNudge, status, error, onEnd }: { focusAreas: CoachingArea[]; turns: ReturnType<typeof useLiveTranscription>["turns"]; currentNudge: ReturnType<typeof useLiveTranscription>["currentNudge"]; status: TranscriptionStatus; error: string | null; onEnd: () => void }) {
-  return <section className="grid flex-1 items-start gap-8 py-10 lg:grid-cols-[.9fr_1.1fr]"><div className="flex flex-col items-start lg:sticky lg:top-8"><p className="text-sm font-bold tracking-[.12em] text-[#5146e5]">LIVE COACHING</p><h1 className="mt-3 max-w-xl text-4xl font-bold tracking-[-.04em] sm:text-5xl">Stay present in the conversation.</h1><p className="mt-5 max-w-lg text-lg leading-8 text-[#5d6884]">The coach is listening quietly and will step in only when a useful prompt is clear.</p><div className="mt-7 rounded-2xl border border-[#dfe4f3] bg-white px-4 py-3 text-sm font-semibold text-[#596785]">Today’s focus: {focusAreas.length ? focusAreas.map(labelForArea).join(" · ") : "All dimensions"}</div><button type="button" onClick={onEnd} disabled={status === "stopping"} className="mt-8 inline-flex min-h-13 items-center justify-center rounded-2xl bg-[#f17856] px-6 text-base font-semibold text-white shadow-[0_10px_22px_rgba(241,120,86,.22)] transition hover:bg-[#df6242] focus:outline-none focus:ring-4 focus:ring-[#ffd4c8] disabled:cursor-wait disabled:opacity-65">{status === "stopping" ? "Finishing…" : "End meeting"}</button>{error && <div role="alert" className="mt-5 max-w-lg rounded-2xl border border-[#f4c5b6] bg-[#fff3ef] px-4 py-3 text-sm font-semibold leading-6 text-[#8b452f]">{error}</div>}</div><div className="space-y-5"><section className="min-h-44 rounded-[1.7rem] border border-[#d8d5ff] bg-gradient-to-br from-[#f0efff] via-[#f5f4ff] to-[#edf5ff] p-6 shadow-[0_18px_45px_rgba(81,70,229,.10)]" aria-live="polite"><p className="text-xs font-bold tracking-[.12em] text-[#5146e5]">LIVE COACH</p>{currentNudge ? <div className="mt-5 border-l-4 border-[#7770e8] pl-5"><p className="text-2xl font-bold leading-9 text-[#17234a]">{currentNudge.text}</p><p className="mt-2 text-sm font-semibold text-[#665fb8]">A small moment to try now</p></div> : <div className="mt-5"><p className="text-xl font-bold text-[#28345b]">Listening quietly…</p><p className="mt-2 leading-7 text-[#6b7591]">The coach stays silent unless there is a clear, useful prompt.</p></div>}</section><details className="overflow-hidden rounded-[1.7rem] border border-[#dfe4f3] bg-white shadow-[0_16px_40px_rgba(48,59,113,.07)]"><summary className="cursor-pointer px-5 py-4 text-sm font-bold text-[#5146e5] sm:px-6">Debug transcript · {turns.length} finalized turns</summary><div className="max-h-[30rem] overflow-y-auto border-t border-[#e7eaf4] p-5 sm:p-6" aria-live="polite">{turns.length === 0 ? <p className="py-12 text-center font-medium text-[#7a86a1]">No finalized turns yet.</p> : <ol className="space-y-4">{turns.map((turn) => <li key={turn.id} className={`rounded-2xl border p-4 ${turn.speaker === "advisor" ? "border-[#d4d1ff] bg-[#f3f1ff]" : "border-[#cbeadf] bg-[#eefaf6]"}`}><div className="flex items-center justify-between gap-4"><p className={`text-xs font-bold uppercase tracking-[.1em] ${turn.speaker === "advisor" ? "text-[#5146e5]" : "text-[#138467]"}`}>{turn.speaker}</p><p className="text-xs font-semibold text-[#8a94ad]">{formatTimestamp(turn.startTimeMs)}</p></div><p className="mt-2 text-base font-medium leading-7 text-[#2f3a5d]">{turn.text}</p></li>)}</ol>}</div></details></div></section>;
+  return <section className="grid flex-1 items-start gap-8 py-10 lg:grid-cols-[.9fr_1.1fr]"><div className="flex flex-col items-start lg:sticky lg:top-8"><h1 className="max-w-xl text-4xl font-bold tracking-[-.04em] sm:text-5xl">Stay present in the conversation.</h1><div className="mt-7 max-w-xl"><p className="text-sm font-semibold text-[#687491]">Today’s focus</p><div className="mt-2 flex flex-wrap gap-2">{focusAreas.map((area) => <span key={area} className="rounded-full bg-[#eceaff] px-3 py-1.5 text-xs font-semibold text-[#5146a5]">{labelForArea(area)}</span>)}</div></div><button type="button" onClick={onEnd} disabled={status === "stopping"} className="mt-8 inline-flex min-h-13 items-center justify-center rounded-2xl bg-[#b85c6b] px-6 text-base font-semibold text-white shadow-[0_10px_22px_rgba(126,56,72,.18)] transition hover:bg-[#a94d5e] focus:outline-none focus:ring-4 focus:ring-[#efcbd2] disabled:cursor-wait disabled:opacity-65">{status === "stopping" ? "Finishing…" : "End meeting"}</button>{error && <div role="alert" className="mt-5 max-w-lg rounded-2xl border border-[#f4c5b6] bg-[#fff3ef] px-4 py-3 text-sm font-semibold leading-6 text-[#8b452f]">{error}</div>}</div><div className="space-y-5"><section className="min-h-44 rounded-[1.7rem] border border-[#d8d5ff] bg-gradient-to-br from-[#f0efff] via-[#f5f4ff] to-[#edf5ff] p-6 shadow-[0_18px_45px_rgba(81,70,229,.10)]" aria-live="polite"><p className="text-xs font-bold tracking-[.12em] text-[#5146e5]">LIVE COACH</p>{currentNudge ? <div className="mt-5 border-l-4 border-[#7770e8] pl-5"><p className="text-2xl font-bold leading-9 text-[#17234a]">{currentNudge.text}</p><p className="mt-2 text-sm font-semibold text-[#665fb8]">A small moment to try now</p></div> : <div className="mt-5"><p className="text-xl font-bold text-[#28345b]">Listening quietly…</p><p className="mt-2 leading-7 text-[#6b7591]">The coach stays silent unless there is a clear, useful prompt.</p></div>}</section><details open className="overflow-hidden rounded-[1.7rem] border border-[#dfe4f3] bg-white shadow-[0_16px_40px_rgba(48,59,113,.07)]"><summary className="cursor-pointer px-5 py-4 text-sm font-bold text-[#5146e5] sm:px-6">Conversation transcript · {turns.length} finalized turns</summary><div className="max-h-[24rem] overflow-y-auto border-t border-[#e7eaf4] p-5 sm:p-6" aria-live="polite">{turns.length === 0 ? <p className="py-10 text-center font-medium text-[#7a86a1]">Finalized conversation turns will appear here.</p> : <ol className="space-y-4">{turns.map((turn) => <li key={turn.id} className={`rounded-2xl border p-4 ${turn.speaker === "advisor" ? "border-[#d4d1ff] bg-[#f3f1ff]" : "border-[#cbeadf] bg-[#eefaf6]"}`}><div className="flex items-center justify-between gap-4"><p className={`text-xs font-bold uppercase tracking-[.1em] ${turn.speaker === "advisor" ? "text-[#5146e5]" : "text-[#138467]"}`}>{turn.speaker}</p><p className="text-xs font-semibold text-[#8a94ad]">{formatTimestamp(turn.startTimeMs)}</p></div><p className="mt-2 text-base font-medium leading-7 text-[#2f3a5d]">{turn.text}</p></li>)}</ol>}</div></details></div></section>;
 }
 
-function TransitionScreen({ finalizing, finishing = false }: { finalizing: boolean; finishing?: boolean }) {
-  return <main className="grid min-h-screen place-items-center bg-[#f7f9ff] px-6 text-center text-[#17234a]"><section className="max-w-md rounded-[1.7rem] border border-[#d8d5ff] bg-white p-8 shadow-[0_20px_55px_rgba(48,59,113,.09)]"><span className="mx-auto grid h-16 w-16 place-items-center rounded-full bg-[#eceaff] text-2xl text-[#5146e5]">⌁</span><h1 className="mt-6 text-2xl font-bold">{finishing ? "Closing this session…" : finalizing ? "Finalizing the last words…" : "Preparing your feedback…"}</h1><p className="mt-3 leading-7 text-[#687491]">{finishing ? "Clearing the temporary meeting context." : finalizing ? "The live view has closed while we finish the transcript." : "Your coach is reviewing the conversation."}</p></section></main>;
+function TransitionScreen() {
+  return <main className="grid min-h-screen place-items-center bg-[#f7f9ff] px-6 text-center text-[#17234a]"><section className="max-w-md rounded-[1.7rem] border border-[#d8d5ff] bg-white p-8 shadow-[0_20px_55px_rgba(48,59,113,.09)]"><span className="mx-auto grid h-16 w-16 place-items-center rounded-full bg-[#eceaff] text-2xl text-[#5146e5]">⌁</span><h1 className="mt-6 text-2xl font-bold">Preparing your feedback…</h1><p className="mt-3 leading-7 text-[#687491]">This will only take a moment.</p></section></main>;
 }
 
-function ReportView({ report, onReflect, onFinish }: { report: PostMeetingReport; onReflect: () => void; onFinish: () => void }) {
-  return <main className="min-h-screen bg-[#f7f9ff] px-5 py-8 text-[#17234a] sm:px-8 lg:px-12"><div className="mx-auto max-w-5xl"><header className="flex items-center justify-between"><Brand /><span className="text-sm font-semibold text-[#687491]">Your coaching report</span></header><h1 className="mt-10 text-center text-3xl font-bold tracking-[-.035em] sm:text-4xl">A few things to carry forward.</h1><section className="mt-8 grid gap-4 md:grid-cols-2"><ReportCard title="WHAT WENT WELL" items={report.strengths} tone="blue" /><ReportCard title="TRY NEXT TIME" items={report.improvements} tone="lavender" /></section><section className="mt-4 grid gap-4 rounded-[1.4rem] border border-[#dfe4f3] bg-white p-5 sm:grid-cols-[1fr_1.15fr] sm:items-center"><div className="sm:pr-6"><p className="text-xs font-bold tracking-[.12em] text-[#5146e5]">YOUR FOCUS</p><p className="mt-1.5 text-sm font-semibold leading-6 text-[#445070]">{report.focus_summary}</p></div><div className="border-t border-[#e7eaf4] pt-4 sm:border-l sm:border-t-0 sm:py-1 sm:pl-6"><p className="text-xs font-bold tracking-[.12em] text-[#5146e5]">TAKEAWAY</p><p className="mt-1.5 text-sm font-semibold leading-6 text-[#445070]">{report.takeaway}</p></div></section><div className="mt-6 flex flex-col justify-center gap-3 sm:flex-row"><ActionButton onClick={onReflect}>Reflect <span className="ml-2">→</span></ActionButton><ActionButton variant="secondary" onClick={onFinish}>Finish</ActionButton></div></div></main>;
+function ReportView({ report, finishing, onReflect, onFinish }: { report: PostMeetingReport; finishing: boolean; onReflect: () => void; onFinish: () => void }) {
+  return <main className="min-h-screen bg-[#f7f9ff] px-5 py-6 text-[#17234a] sm:px-8 lg:px-12"><div className="mx-auto max-w-5xl"><header className="flex items-center justify-between"><Brand /><button type="button" disabled={finishing} onClick={onFinish} className="rounded-xl px-3 py-2 text-sm font-semibold text-[#65708d] transition hover:bg-white hover:text-[#34405f] focus:outline-none focus:ring-4 focus:ring-[#e5e3ff] disabled:cursor-not-allowed disabled:opacity-50">← Home</button></header><h1 className="mt-6 text-center text-3xl font-bold tracking-[-.035em] sm:text-4xl">A few things to carry forward.</h1><section className="mt-6 grid gap-4 md:grid-cols-2"><ReportCard title="What went well" items={report.strengths} tone="blue" /><ReportCard title="What to improve" items={report.improvements} tone="lavender" /></section><section className="mt-4 rounded-[1.4rem] border border-[#dfe4f3] bg-white px-5 py-4"><p className="text-sm font-bold text-[#5146e5]">Your focus</p><p className="mt-1.5 text-sm font-semibold leading-6 text-[#445070]">{report.focus_summary}</p></section><div className="mt-5 flex flex-col justify-center gap-3 sm:flex-row"><ActionButton disabled={finishing} onClick={onReflect}>Reflect <span className="ml-2">→</span></ActionButton><ActionButton variant="secondary" disabled={finishing} onClick={onFinish}>{finishing ? "Finishing…" : "Finish"}</ActionButton></div></div></main>;
 }
 
 function ReportCard({ title, items, tone }: { title: string; items: string[]; tone: "blue" | "lavender" }) {
   return <article className={`rounded-[1.5rem] border p-5 sm:p-6 ${tone === "blue" ? "border-[#cedcff] bg-[#eef3ff]" : "border-[#d8d3ff] bg-[#f3f0ff]"}`}><p className="text-sm font-bold tracking-wide text-[#4059b8]">{title}</p><ul className="mt-3 space-y-2 text-xl font-bold leading-8 text-[#27325e]">{items.map((item) => <li key={item}>{item}</li>)}</ul></article>;
 }
 
-function ReportErrorView({ message, onRetry, onFinish }: { message: string; onRetry: () => void; onFinish: () => void }) {
-  return <main className="grid min-h-screen place-items-center bg-[#f7f9ff] px-6 text-[#17234a]"><section className="max-w-lg rounded-[1.7rem] border border-[#f0d2c8] bg-white p-8 text-center shadow-[0_20px_55px_rgba(48,59,113,.09)]"><h1 className="text-2xl font-bold">Feedback needs another try</h1><p className="mt-3 leading-7 text-[#687491]">{message}</p><div className="mt-7 flex justify-center gap-3"><ActionButton onClick={onRetry}>Retry</ActionButton><ActionButton variant="secondary" onClick={onFinish}>Finish</ActionButton></div></section></main>;
+function ReportErrorView({ message, finishing, onRetry, onFinish }: { message: string; finishing: boolean; onRetry: () => void; onFinish: () => void }) {
+  return <main className="grid min-h-screen place-items-center bg-[#f7f9ff] px-6 text-[#17234a]"><section className="max-w-lg rounded-[1.7rem] border border-[#f0d2c8] bg-white p-8 text-center shadow-[0_20px_55px_rgba(48,59,113,.09)]"><h1 className="text-2xl font-bold">Feedback needs another try</h1><p className="mt-3 leading-7 text-[#687491]">{message}</p><div className="mt-7 flex justify-center gap-3"><ActionButton disabled={finishing} onClick={onRetry}>Retry</ActionButton><ActionButton variant="secondary" disabled={finishing} onClick={onFinish}>{finishing ? "Finishing…" : "Finish"}</ActionButton></div></section></main>;
 }
 
-function ReflectionView({ messages, draft, error, complete, onDraftChange, onSend, onBack, onFinish }: { messages: ReflectionMessage[]; draft: string; error: string | null; complete: boolean; onDraftChange: (value: string) => void; onSend: () => void; onBack: () => void; onFinish: () => void }) {
+function ReflectionView({ messages, draft, error, complete, sending, finishing, onDraftChange, onSend, onBack, onFinish }: { messages: ReflectionMessage[]; draft: string; error: string | null; complete: boolean; sending: boolean; finishing: boolean; onDraftChange: (value: string) => void; onSend: () => void; onBack: () => void; onFinish: () => void }) {
   const takeaway = messages.find((message) => message.text.startsWith("TAKEAWAY_FOR_NEXT_TIME:"))?.text.replace("TAKEAWAY_FOR_NEXT_TIME:", "");
   const visibleMessages = messages.filter((message) => !message.text.startsWith("TAKEAWAY_FOR_NEXT_TIME:"));
-  return <main className="min-h-screen bg-[#f7f9ff] px-5 py-8 text-[#17234a] sm:px-8"><div className="mx-auto max-w-3xl"><header className="flex items-center justify-between"><Brand /><button type="button" onClick={onBack} className="rounded-xl px-3 py-2 text-sm font-semibold text-[#536080] hover:bg-white">← Report</button></header><section className="mt-8 overflow-hidden rounded-[1.7rem] bg-white shadow-[0_20px_55px_rgba(48,59,113,.09)]"><div className="border-b border-[#ebedf5] px-6 py-5"><p className="text-sm font-bold tracking-wide text-[#5146e5]">A SHORT REFLECTION</p><h1 className="mt-1 text-2xl font-bold tracking-[-.03em]">Make the learning your own.</h1></div><div className="space-y-3 p-5 sm:p-6">{visibleMessages.map((message, index) => <div key={`${message.author}-${index}`} className={`flex ${message.author === "advisor" ? "justify-end" : "justify-start"}`}><div className={`max-w-[88%] rounded-[1.25rem] px-4 py-3 text-sm leading-6 sm:text-base ${message.author === "advisor" ? "rounded-br-md bg-[#5146e5] text-white" : "rounded-bl-md bg-[#eef0ff] text-[#29345f]"}`}>{message.author === "coach" && <p className="mb-1 text-xs font-bold tracking-wide text-[#5146e5]">YOUR COACH</p>}{message.text}</div></div>)}</div>{!complete && <div className="border-t border-[#ebedf5] bg-[#fbfcff] p-4"><form onSubmit={(event) => { event.preventDefault(); onSend(); }} className="flex gap-3"><label className="sr-only" htmlFor="reflection">Your reflection</label><input id="reflection" value={draft} onChange={(event) => onDraftChange(event.target.value)} placeholder="Write your reflection…" className="min-h-12 flex-1 rounded-2xl border border-[#dce1ee] bg-white px-4 text-base outline-none placeholder:text-[#8a94ad] focus:border-[#5146e5] focus:ring-4 focus:ring-[#e5e3ff]" /><ActionButton type="submit" disabled={!draft.trim()}>Send</ActionButton></form>{error && <p role="alert" className="mt-3 text-sm font-semibold text-[#9a4a32]">{error}</p>}</div>}</section>{complete && takeaway && <section className="mt-4 flex flex-col items-start justify-between gap-4 rounded-[1.4rem] border border-[#cedcff] bg-[#eef3ff] p-5 sm:flex-row sm:items-center"><div><p className="text-xs font-bold tracking-[.12em] text-[#4059b8]">TAKEAWAY FOR NEXT TIME</p><p className="mt-1 text-base font-bold text-[#27325e]">{takeaway}</p></div><ActionButton variant="secondary" onClick={onFinish}>Finish</ActionButton></section>}{error && <div className="mt-4 flex items-center justify-between gap-4 rounded-2xl border border-[#f0d2c8] bg-white p-4"><p className="text-sm font-semibold text-[#687491]">You can retry, return to the report, or finish.</p><div className="flex gap-2"><ActionButton variant="secondary" onClick={onBack}>Report</ActionButton><ActionButton variant="secondary" onClick={onFinish}>Finish</ActionButton></div></div>}</div></main>;
+  return <main className="min-h-screen bg-[#f7f9ff] px-5 py-8 text-[#17234a] sm:px-8"><div className="mx-auto max-w-3xl"><header className="flex items-center justify-between gap-4"><Brand /><button type="button" disabled={finishing} onClick={onBack} className="rounded-xl px-3 py-2 text-sm font-semibold text-[#536080] hover:bg-white disabled:cursor-not-allowed disabled:opacity-50">← Back to report</button></header><section className="mt-8 overflow-hidden rounded-[1.7rem] bg-white shadow-[0_20px_55px_rgba(48,59,113,.09)]"><div className="border-b border-[#ebedf5] px-6 py-5"><p className="text-sm font-bold tracking-wide text-[#5146e5]">A SHORT REFLECTION</p><h1 className="mt-1 text-2xl font-bold tracking-[-.03em]">Make the learning your own.</h1><p className="mt-2 text-sm leading-6 text-[#687491]">Take a moment to notice what you want to carry into the next conversation.</p></div><div className="space-y-3 p-5 sm:p-6">{visibleMessages.map((message, index) => <div key={`${message.author}-${index}`} className={`flex ${message.author === "advisor" ? "justify-end" : "justify-start"}`}><div className={`max-w-[88%] rounded-[1.25rem] px-4 py-3 text-sm leading-6 sm:text-base ${message.author === "advisor" ? "rounded-br-md bg-[#5146e5] text-white" : "rounded-bl-md bg-[#eef0ff] text-[#29345f]"}`}>{message.author === "coach" && <p className="mb-1 text-xs font-bold tracking-wide text-[#5146e5]">YOUR COACH</p>}{message.text}</div></div>)}</div>{!complete && <div className="border-t border-[#ebedf5] bg-[#fbfcff] p-4"><form onSubmit={(event) => { event.preventDefault(); onSend(); }} className="flex gap-3"><label className="sr-only" htmlFor="reflection">Your reflection</label><input id="reflection" value={draft} disabled={sending || finishing} onChange={(event) => onDraftChange(event.target.value)} placeholder="Write your reflection…" className="min-h-12 flex-1 rounded-2xl border border-[#dce1ee] bg-white px-4 text-base outline-none placeholder:text-[#8a94ad] focus:border-[#5146e5] focus:ring-4 focus:ring-[#e5e3ff] disabled:opacity-60" /><ActionButton type="submit" disabled={!draft.trim() || sending || finishing}>{sending ? "Sending…" : "Send"}</ActionButton></form>{error && <p role="alert" className="mt-3 text-sm font-semibold text-[#9a4a32]">{error}</p>}</div>}</section>{complete && takeaway && <section className="mt-4 rounded-[1.4rem] border border-[#cedcff] bg-[#eef3ff] p-5"><p className="text-xs font-bold tracking-[.12em] text-[#4059b8]">TAKEAWAY FOR NEXT TIME</p><p className="mt-1 text-base font-bold text-[#27325e]">{takeaway}</p></section>}<div className="mt-5 flex justify-end"><ActionButton disabled={finishing} onClick={onFinish}>{finishing ? "Finishing…" : "Finish"}</ActionButton></div></div></main>;
 }
 
 function ActionButton({ children, onClick, variant = "primary", type = "button", disabled = false }: { children: React.ReactNode; onClick?: () => void; variant?: "primary" | "secondary"; type?: "button" | "submit"; disabled?: boolean }) {

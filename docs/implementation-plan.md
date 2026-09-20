@@ -1328,3 +1328,166 @@ Manual verification is complete: focus persists across browser reload and backen
 3. Preserve private report/reflection classifications and public response boundaries.
 4. Verify Home APIs, deterministic insight derivation, completion cleanup, and idempotency.
 5. Run backend/frontend checks and perform manual restart/privacy verification.
+
+## Slice 5 — Integration, UI Cleanup, Hardening, and Demo Readiness
+
+**Status:** Implemented — pending manual verification
+
+Slice 5 makes the completed MVP easier to understand and demonstrate. It does not add a new product capability or architecture. The work is limited to simplifying the real UI, hardening a few confirmed lifecycle edges, correcting small copy issues, updating setup documentation, and verifying the complete two-person flow.
+
+### 1. UI Simplification
+
+Keep the existing visual language, page structure, coaching dimensions, focus behavior, and backend lifecycle. Make only the following presentation changes in `frontend/src/app/page.tsx`.
+
+**Home**
+
+- Keep one short heading and supporting sentence, the five focus controls, one compact Recent coaching insight, Start meeting, and an optional quiet sentence explaining that conversation audio and transcript are temporary.
+- Remove `LIVE COACHING`, `Ready when you are`, the idle status/readiness message, the microphone-inactive card, and the oversized private-coach explanation.
+- Do not show an unavailable insight while Home is still loading. Keep the layout stable and the controls safely disabled until saved focus hydration finishes.
+- Preserve optimistic focus selection, the one-focus minimum, saved-focus persistence, and non-blocking focus-save failure behavior.
+
+**Live meeting**
+
+- Keep the active focus, listening state, one live-coach nudge area, and End meeting.
+- Present selected focus areas as compact, wrapping chips under `Today’s focus`, using the canonical human-readable labels.
+- Use a restrained cool-red/rose treatment for End meeting.
+- Provide a subtle Home escape that closes microphone/socket resources, clears temporary frontend meeting state, and abandons the meeting without generating a report.
+- Keep the temporary adviser/customer transcript visible as product UI in the existing collapsible, scrollable presentation; do not label it as a developer/debug feature.
+- Retain the existing temporary `turns` and `sessionTurns` state and architecture. The transcript remains in memory only and must clear on failure, Finish, and session reset.
+
+**Post-End loading**
+
+- Keep `finalizing` and `preparing_report` as internal phases where useful.
+- Render the same loading card for both phases: `Preparing your feedback…` with one short supporting sentence.
+- The visible flow must be End meeting → Preparing your feedback… → Report. Never show `Finalizing the last words…` as a separate screen.
+
+**Report**
+
+- Show three visible sections: `What went well`, `What to improve`, and a lighter full-width `Your focus` tile backed by `focus_summary`.
+- Do not render the report `takeaway`; keep it unchanged in the backend/API for internal compatibility while Reflection owns the adviser-facing takeaway experience.
+- Keep Reflect and Finish as the only report actions.
+- Keep the complete report within a reasonable laptop viewport where possible and do not introduce a new Next focus concept.
+- Keep `focus_summary` and `takeaway` unchanged in the backend models, OpenRouter structured-output schema, API response, validation, and temporary session data.
+
+**Reflection**
+
+- Keep a clear reflection header and context, visually distinct coach/adviser messages with `YOUR COACH` or equivalent role labels, the free-text input and Send action, the final takeaway, Back to report, and Finish.
+- Keep the consolidated error presentation; do not restore the duplicate error panel.
+- Add a clear request-in-progress state that disables repeat Send actions while preserving the current stable `messageId`, idempotent retry, retained draft, and two-reply limit.
+
+**Finish and Home return**
+
+- Keep the report or reflection screen visible while completion and cleanup run, and disable duplicate Finish actions.
+- Remove the full-screen `Closing this session…` transition if this can be done without weakening cleanup.
+- Return to a clean Home after completion, reload persistent learning, and show only a quiet non-blocking warning if learning persistence failed while cleanup still succeeded.
+
+### 2. Small Reliability Hardening
+
+Do not redesign the existing error architecture. Add only these targeted protections:
+
+- Bound the wait from End meeting to `session.stopped` so a silent WebSocket/provider stall cannot leave the UI loading indefinitely. Use a conservative timeout above the backend's normal Deepgram finalization window and surface the existing actionable restart path on expiry.
+- Keep the existing report timeout, Retry, and Finish behavior. Errors during either internal post-End phase must leave a clear escape path even though both phases share one loading presentation.
+- Bound both the completion request and its fallback `DELETE`; neither cleanup request may strand the UI indefinitely.
+- On live failure, Finish, and session reset, clear temporary visible turns, retained session turns, the current nudge, completed-session identity, report/reflection state, pending requests, and microphone/socket resources as applicable.
+- Reset the transcription/session status to `idle` after Finish so Home returns as Ready rather than Stopped and a second meeting begins from clean state.
+- Read `learningSaved` from the completion response. A false value must not block cleanup or Home return, but it should produce a restrained persistence warning.
+- Preserve backend report caching, report retryability, reflection idempotency, and the rule that database failure still deletes temporary post-meeting state.
+
+No reconnection, retry framework, routing change, state library, or new error abstraction is required.
+
+### 3. Small Copy and Polish Fixes
+
+- Replace character slicing of generated report/reflection text with a word-boundary-safe bounded-text helper so normalization cannot cut prose mid-word. Keep all current maximum lengths and the existing structured-output fields.
+- Add focused backend regression coverage for bounded text that exceeds a limit.
+- Capitalize deterministic Recent coaching insight sentences when an area label begins the sentence.
+- Reduce the initial Home loading/caption flicker without introducing another state architecture.
+- Use the five canonical product labels consistently: Pace & pauses; Turn-taking & interruptions; Open questions; Acknowledging emotional cues; Stay with the customer before solving.
+- Keep the two main report cards, lighter full-width focus tile, and actions compact enough to fit comfortably in a typical laptop viewport.
+
+### 4. Setup Documentation
+
+Update `README.md` to describe the implemented real root application rather than a future or mock-only MVP.
+
+The documented stack must be:
+
+```text
+Deepgram
+OpenRouter / google/gemini-2.5-flash
+SQLite
+```
+
+Document only these required credentials:
+
+```text
+DEEPGRAM_API_KEY
+OPENROUTER_API_KEY
+```
+
+The setup path should be clone, create/activate `backend/.venv`, install `backend/requirements.txt`, copy the root `.env.example` to `backend/.env`, fill the two keys, start FastAPI on port 8001, run `npm ci`, and start Next.js. State that SQLite creates `backend/data/adviser_learning.db` automatically and requires no credentials or migration.
+
+Remove outdated OpenAI-key, Supabase, PostgreSQL, migration, future-MVP, and mockup-as-primary instructions. Keep `/mockup` documented only as an isolated reference route if it is mentioned at all. Do not add a reset button or another documentation file.
+
+### 5. Final End-to-End Demo Verification
+
+Run:
+
+```bash
+cd backend
+.venv/bin/python -m compileall app
+.venv/bin/python -m unittest discover -s tests
+
+cd ../frontend
+npm run lint
+npm run build
+
+cd ..
+git diff --check
+```
+
+Then perform one real Chrome/Edge rehearsal with two people:
+
+1. Open a clean Home and confirm saved focus plus the compact Recent coaching insight load without misleading flash copy.
+2. Change focus, reload, and confirm persistence still works.
+3. Start a live meeting and confirm microphone, coaching, one useful nudge, and the collapsible product transcript work with visible adviser/customer labels.
+4. End the meeting and confirm exactly one continuous `Preparing your feedback…` screen appears before the report.
+5. Confirm the report contains What went well, What to improve, the full-width Your focus tile, Reflect, and Finish—but no report Takeaway—and fits the demo laptop viewport.
+6. Complete the richer two-reply Reflection and confirm coach/adviser roles are clear, duplicate Send is prevented, retry remains possible, and one final takeaway appears.
+7. Finish and confirm cleanup completes, Home returns in the ready state, learning refreshes, and no customer-specific content remains visible.
+8. Start and finish a second meeting to verify there is no stale transcript, nudge, report, reflection, session ID, error, or stopped status.
+9. Sanity-check microphone denial, backend/WebSocket failure, report Retry/Finish, reflection retry, and SQLite failure without redesigning those flows.
+10. Follow the updated README from a clean local setup and confirm Deepgram, OpenRouter, and automatic SQLite initialization are sufficient.
+
+### 6. Files and Scope
+
+Expected implementation files:
+
+- `frontend/src/app/page.tsx`: simplified Home, compact live focus chips, safe live escape, richer live transcript, shared loading, three-section report, richer Reflection, Finish, warning, and transition cleanup.
+- `frontend/src/hooks/useLiveTranscription.ts`: bounded finalization wait, complete failure/reset cleanup, and idle status reset. Temporary transcript state remains.
+- `backend/app/post_meeting.py`: word-boundary-safe bounding only; preserve the report schema and provider contract.
+- `backend/app/adviser_learning.py`: deterministic insight capitalization.
+- `backend/tests/test_post_meeting.py`: bounded-text regression coverage without changing report fields.
+- `backend/tests/test_adviser_learning.py`: capitalization coverage.
+- `README.md`: current stack and exact local setup.
+
+No dependency changes are expected. Do not modify `docs/architecture.md`, `docs/tech-stack.md`, the mockup, or the five coaching dimensions unless implementation reveals a concrete contradiction.
+
+Explicitly deferred:
+
+- backend report-schema redesign or removal of `focus_summary` / `takeaway`;
+- removal or redesign of frontend transcript state;
+- component-library extraction or major visual redesign;
+- prosody/Hume;
+- authentication or multi-user support;
+- deployment;
+- dashboards, analytics, rankings, or manager views;
+- a product reset button;
+- new providers, databases, or infrastructure.
+
+### 7. Implementation Order
+
+1. Harden finalization, cleanup timeouts, temporary-state clearing, and idle reset.
+2. Keep Home and post-End loading simplified while retaining the richer Live transcript, compact focus chips, safe escape, three-section Report, Reflection context, and Finish presentation.
+3. Add request-in-progress and quiet learning-persistence feedback states.
+4. Implement word-safe bounding and insight capitalization with focused backend tests.
+5. Update README setup and current-stack language.
+6. Run all automated checks and complete the real two-person rehearsal, including a second meeting and failure/retry sanity pass.

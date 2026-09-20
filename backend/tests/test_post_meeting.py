@@ -273,11 +273,11 @@ class PostMeetingTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_overlong_report_text_is_truncated_before_validation(self) -> None:
         overlong_report = {
-            "strengths": ["s" * 220],
-            "improvements": ["i" * 220],
-            "focus_summary": "f" * 260,
-            "takeaway": "t" * 200,
-            "reflection_context": "r" * 700,
+            "strengths": ["Ask thoughtful open questions " * 10],
+            "improvements": ["Pause before offering the next step " * 10],
+            "focus_summary": "Stay with the customer before solving " * 10,
+            "takeaway": "Pause and acknowledge the emotion first " * 8,
+            "reflection_context": "The adviser noticed a useful communication pattern " * 20,
             "strength_areas": [CoachingArea.OPEN_QUESTIONS.value],
             "improvement_areas": [CoachingArea.STAY_BEFORE_SOLVING.value],
         }
@@ -293,11 +293,36 @@ class PostMeetingTests(unittest.IsolatedAsyncioTestCase):
 
         response = await post_meeting.create_report(session_id)
 
-        self.assertEqual(len(response.report.strengths[0]), 180)
-        self.assertEqual(len(response.report.improvements[0]), 180)
-        self.assertEqual(len(response.report.focus_summary), 220)
-        self.assertEqual(len(response.report.takeaway), 160)
-        self.assertEqual(len(post_meeting.store.get(session_id).reflection_context), 600)
+        self.assertLessEqual(len(response.report.strengths[0]), 180)
+        self.assertLessEqual(len(response.report.improvements[0]), 180)
+        self.assertLessEqual(len(response.report.focus_summary), 220)
+        self.assertLessEqual(len(response.report.takeaway), 160)
+        self.assertLessEqual(len(post_meeting.store.get(session_id).reflection_context), 600)
+        bounded_strength = response.report.strengths[0]
+        bounded_focus = response.report.focus_summary
+        self.assertTrue(overlong_report["strengths"][0].startswith(bounded_strength))
+        self.assertTrue(overlong_report["strengths"][0][len(bounded_strength)].isspace())
+        self.assertTrue(overlong_report["focus_summary"].startswith(bounded_focus))
+        self.assertTrue(overlong_report["focus_summary"][len(bounded_focus)].isspace())
+
+    def test_bounded_text_stops_at_a_word_boundary(self) -> None:
+        self.assertEqual(post_meeting.bounded_text("one two three", 9), "one two")
+        self.assertEqual(post_meeting.bounded_text("one two", 7), "one two")
+        self.assertEqual(post_meeting.bounded_text("unbroken", 4), "")
+
+    def test_bounded_text_prefers_the_last_complete_sentence(self) -> None:
+        value = "Notice the cue. Stay with the customer before offering the next step."
+
+        self.assertEqual(post_meeting.bounded_text(value, 48), "Notice the cue.")
+
+    def test_bounded_text_removes_an_unfinished_trailing_connector(self) -> None:
+        prefix = "Acknowledge the concern before offering the"
+        value = f"{prefix} solution that comes next"
+
+        bounded = post_meeting.bounded_text(value, len(prefix))
+
+        self.assertEqual(bounded, "Acknowledge the concern before offering")
+        self.assertLessEqual(len(bounded), len(prefix))
 
     async def test_duplicate_canonical_learning_areas_are_deduplicated_in_order(self) -> None:
         duplicate_report = {

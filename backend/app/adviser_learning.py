@@ -303,11 +303,11 @@ def insight_for_history(records: tuple[LearningRecord, ...]) -> str | None:
     stable = next((area for area in current.strength_areas if area in prior_strengths), None)
     area = repeated or progressed or stable
     if repeated:
-        return f"{area_label(area)} remains a useful area to practise."
+        return f"{sentence_area_label(area)} remains a useful area to practise."
     if progressed:
         return f"You’re showing more consistency with {area_label(area)}."
     if stable:
-        return f"{area_label(area)} is becoming a steady strength."
+        return f"{sentence_area_label(area)} is becoming a steady strength."
     if current.improvement_areas:
         return f"Keep practising {area_label(current.improvement_areas[0])}."
     if current.strength_areas:
@@ -323,6 +323,11 @@ def area_label(area: CoachingArea | None) -> str:
         CoachingArea.ACKNOWLEDGING_EMOTIONAL_CUES: "acknowledging emotional cues",
         CoachingArea.STAY_BEFORE_SOLVING: "staying with the customer before solving",
     }.get(area, "the coaching dimensions")
+
+
+def sentence_area_label(area: CoachingArea | None) -> str:
+    label = area_label(area)
+    return label[:1].upper() + label[1:]
 
 
 def build_candidate(session: post_meeting.PostMeetingSession) -> LearningCandidate | None:

@@ -1,39 +1,21 @@
 # AI Compassion Coach
 
-Hackathon prototype of an AI coaching assistant for customer-facing financial advisers.
-
-The system helps advisers improve how they communicate during difficult or emotionally sensitive customer conversations through:
-
-- lightweight live coaching nudges
-- concise post-meeting feedback
-- short reflection
-- adviser learning that carries across meetings
-
-The core principle is:
+Hackathon prototype of a private AI coaching assistant for customer-facing financial advisers. It listens during difficult or emotionally sensitive customer conversations, offers selective live nudges, and turns each meeting into concise feedback and generic adviser learning.
 
 > Remember the learning, forget the customer conversation.
 
-## Product Flow
+## Product flow
 
 ```text
-Home / Progress
-      ↓
-Live Meeting + Coaching Nudges
-      ↓
-Post-meeting Report
-      ↓
-Optional Reflection
-      ↓
-Updated Adviser Learning
+Choose coaching focus
+→ Start a live meeting
+→ Receive selective coaching nudges
+→ Review post-meeting feedback
+→ Optionally reflect with the coach
+→ Carry generic adviser learning into the next meeting
 ```
 
-The adviser selects their coaching focus on Home / Progress. Starting a meeting uses those selected focus areas directly.
-
-The product focuses on coaching the adviser rather than analysing or profiling the customer.
-
-## Coaching Dimensions
-
-The MVP uses five coaching dimensions:
+The MVP coaches how the adviser communicates across five dimensions:
 
 1. Pace & pauses
 2. Turn-taking & interruptions
@@ -41,251 +23,72 @@ The MVP uses five coaching dimensions:
 4. Acknowledging emotional cues
 5. Stay with the customer before solving
 
-These are qualitative coaching dimensions, not numeric performance scores.
+Audio, transcript, customer details, and exact meeting moments are temporary session data. SQLite stores only canonical, generic adviser-learning fields.
 
-## Tech Stack
+## Stack
 
-### Frontend
+- Next.js, React, TypeScript, and Tailwind CSS
+- FastAPI and WebSockets
+- Deepgram for streaming transcription and speaker separation
+- OpenRouter with `google/gemini-2.5-flash` for semantic coaching and post-meeting generation
+- SQLite for automatic local adviser-learning persistence
 
-- React
-- Next.js
-- TypeScript
-- Tailwind CSS
+The root route is the real MVP. `/mockup` remains an isolated frontend-only reference route.
 
-### Backend
+## Local setup
 
-- Python
-- FastAPI
-- WebSockets
-
-### Services
-
-- Deepgram — streaming speech-to-text and speaker diarization
-- OpenAI — semantic analysis and coaching
-- Supabase / PostgreSQL — persistent adviser learning
-
-See [`docs/tech-stack.md`](docs/tech-stack.md) for details.
-
-## Repository Structure
-
-```text
-/
-├── AGENTS.md
-├── README.md
-├── docs/
-│   ├── architecture.md
-│   ├── tech-stack.md
-│   └── ui-guidelines.md
-├── frontend/
-│   └── src/
-│       ├── app/
-│       │   └── mockup/
-│       ├── components/
-│       │   └── mockup/
-│       └── lib/
-│           └── mockup/
-└── backend/
-    └── app/
-```
-
-## Documentation
-
-### [`AGENTS.md`](AGENTS.md)
-
-Context and instructions for AI coding agents.
-
-Contains:
-
-- hackathon context
-- product idea
-- coaching principles
-- privacy constraints
-- MVP boundaries
-- implementation guidelines
-
-### [`docs/architecture.md`](docs/architecture.md)
-
-Source of truth for system design.
-
-Contains:
-
-- end-to-end architecture
-- live meeting flow
-- behavioral and semantic analysis
-- rolling context
-- nudge logic
-- post-meeting analysis
-- reflection
-- persistent adviser learning
-- data lifecycle
-- product screens
-- MVP boundaries
-
-### [`docs/tech-stack.md`](docs/tech-stack.md)
-
-Source of truth for technology choices.
-
-Contains:
-
-- frontend stack
-- FastAPI backend
-- Deepgram
-- OpenAI
-- Supabase / PostgreSQL
-- temporary session state
-- localhost development
-- optional prosody stretch goal
-
-### [`docs/ui-guidelines.md`](docs/ui-guidelines.md)
-
-Visual and interaction guidelines.
-
-Contains:
-
-- light and projector-friendly visual direction
-- color usage
-- layout principles
-- coaching UI principles
-- readability requirements
-- guidance for avoiding surveillance-style or dashboard-heavy design
-
-## Frontend Mockup
-
-A frontend-only clickable mockup is available under:
-
-```text
-/mockup
-```
-
-The mockup demonstrates:
-
-- Home / Progress
-- coaching focus selection
-- live meeting state
-- sample coaching nudges
-- post-meeting report
-- short reflection experience
-- return to Home
-
-The adviser selects coaching focus areas on Home / Progress before starting a meeting.
-
-The reflection experience uses free-text conversation rather than predefined response options.
-
-The mockup uses frontend-only mock data and does not call the real backend, Deepgram, OpenAI, or Supabase.
-
-Mockup-specific code is intentionally isolated under:
-
-```text
-frontend/src/app/mockup/
-frontend/src/components/mockup/
-frontend/src/lib/mockup/
-```
-
-This allows the mockup to be changed or removed without affecting the future real implementation.
-
-## Local Development
-
-### Frontend
+Clone the repository, then create the backend environment:
 
 ```bash
-cd frontend
-npm install
-npm run dev
-```
-
-The frontend will normally run on:
-
-```text
-http://localhost:3000
-```
-
-If that port is already occupied, Next.js may automatically use another port such as `3001`.
-
-The mockup is then available at:
-
-```text
-http://localhost:<frontend-port>/mockup
-```
-
-### Backend
-
-```bash
-cd backend
+git clone <repository-url>
+cd vivicta_finance/backend
+python3 -m venv .venv
 source .venv/bin/activate
+pip install -r requirements.txt
+```
+
+Copy the example environment file and add the two required credentials:
+
+```bash
+cp ../.env.example .env
+```
+
+```text
+DEEPGRAM_API_KEY=...
+OPENROUTER_API_KEY=...
+```
+
+Start FastAPI on port 8001:
+
+```bash
 uvicorn app.main:app --reload --port 8001
 ```
 
-Backend health check:
+In another terminal, install and start the frontend:
 
-```text
-http://localhost:8001/health
+```bash
+cd frontend
+npm ci
+npm run dev
 ```
 
-Deepgram authentication check:
+Open [http://localhost:3000](http://localhost:3000). If port 3000 is occupied, use the alternate local URL printed by Next.js.
 
-```text
-http://localhost:8001/deepgram/health
+SQLite creates `backend/data/adviser_learning.db` automatically. It needs no credentials, server, or migration step.
+
+## Checks
+
+```bash
+cd backend
+.venv/bin/python -m compileall app
+.venv/bin/python -m unittest discover -s tests
+
+cd ../frontend
+npm run lint
+npm run build
+
+cd ..
+git diff --check
 ```
 
-## Environment Variables
-
-Backend credentials are stored locally in:
-
-```text
-backend/.env
-```
-
-Current services may require:
-
-```text
-DEEPGRAM_API_KEY=
-OPENAI_API_KEY=
-SUPABASE_URL=
-SUPABASE_KEY=
-```
-
-Not all integrations are implemented yet.
-
-Do not commit secrets or `.env` files to Git.
-
-## MVP Direction
-
-The intended real MVP will eventually support:
-
-- real microphone input
-- streaming transcription
-- speaker separation
-- behavioral signal detection
-- semantic conversation analysis
-- selective live coaching nudges
-- post-meeting coaching report
-- short free-text reflection chat
-- adviser learning across sessions
-- lightweight Home / Progress experience
-
-The current frontend mockup is for product discussion and UX validation before implementing the complete system.
-
-## Development Principles
-
-- Keep the project proportional to a hackathon.
-- Prefer simple end-to-end vertical slices over large all-at-once implementation.
-- Keep application logic primarily in the FastAPI backend.
-- Keep the frontend focused on interaction and presentation.
-- Use deterministic logic where possible.
-- Use AI where conversational meaning and context are required.
-- Keep customer conversation data temporary.
-- Persist adviser learning, not customer conversation history.
-- Keep documentation minimal and update existing documents instead of creating unnecessary new files.
-- Make the local end-to-end experience reliable before spending time on deployment or stretch goals.
-
-## Status
-
-Hackathon MVP under active development.
-
-Current state:
-
-- product concept and architecture defined
-- documentation baseline established
-- frontend mockup available for team discussion
-- initial backend and Deepgram setup completed
-- real product implementation will be developed in vertical slices after team alignment
+Architecture and technology decisions are documented in `docs/architecture.md` and `docs/tech-stack.md`.

@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 import time
 from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable
@@ -52,6 +53,45 @@ SEMANTIC_EVENT_TYPES = {
     EventType.MISSED_EMOTIONAL_CUE,
     EventType.PREMATURE_PROBLEM_SOLVING,
 }
+
+INCOMPLETE_TRAILING_WORDS = {
+    "a",
+    "an",
+    "and",
+    "as",
+    "at",
+    "but",
+    "by",
+    "for",
+    "from",
+    "in",
+    "of",
+    "on",
+    "or",
+    "the",
+    "to",
+    "with",
+}
+
+
+def bounded_text(value: str, limit: int) -> str:
+    """Bound generated prose at a complete sentence or safe word boundary."""
+    if len(value) <= limit:
+        return value
+    prefix = value[:limit]
+    sentence_ends = list(re.finditer(r"[.!?](?=\s|$)", prefix))
+    if sentence_ends:
+        return prefix[: sentence_ends[-1].end()].rstrip()
+    if not value[limit].isspace():
+        boundary = max(
+            (index for index, character in enumerate(prefix) if character.isspace()),
+            default=-1,
+        )
+        prefix = prefix[:boundary] if boundary >= 0 else ""
+    bounded = prefix.rstrip()
+    while bounded and bounded.rsplit(maxsplit=1)[-1].lower().rstrip(",;:") in INCOMPLETE_TRAILING_WORDS:
+        bounded = bounded.rsplit(maxsplit=1)[0] if " " in bounded else ""
+    return bounded
 
 
 class PostMeetingReport(BaseModel):
@@ -394,12 +434,12 @@ The reflection_context must be a short generic summary of adviser behavior, with
         for field_name, limit in BOUNDED_TEXT_LIMITS.items():
             value = normalized.get(field_name)
             if isinstance(value, str):
-                normalized[field_name] = value[:limit]
+                normalized[field_name] = bounded_text(value, limit)
         for field_name, limit in BOUNDED_LIST_ITEM_LIMITS.items():
             value = normalized.get(field_name)
             if isinstance(value, list):
                 normalized[field_name] = [
-                    item[:limit] if isinstance(item, str) else item for item in value
+                    bounded_text(item, limit) if isinstance(item, str) else item for item in value
                 ]
         try:
             return schema.model_validate(normalized)

@@ -105,6 +105,25 @@ class AdviserLearningTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertIn("more consistency", learning.insight_for_history((latest, older)))
 
+    def test_area_label_is_capitalized_when_it_begins_an_insight(self):
+        adviser_id = learning.DEMO_ADVISER_ID
+        older = learning.LearningRecord(
+            id=uuid4(), adviser_id=adviser_id,
+            focus_areas=[CoachingArea.PACE_AND_PAUSES],
+            strength_areas=[], improvement_areas=[CoachingArea.PACE_AND_PAUSES],
+            created_at=datetime.now(timezone.utc),
+        )
+        latest = learning.LearningRecord(
+            id=uuid4(), adviser_id=adviser_id,
+            focus_areas=[CoachingArea.PACE_AND_PAUSES],
+            strength_areas=[], improvement_areas=[CoachingArea.PACE_AND_PAUSES],
+            created_at=datetime.now(timezone.utc),
+        )
+
+        self.assertTrue(
+            learning.insight_for_history((latest, older)).startswith("A calm pace")
+        )
+
     async def test_home_focus_and_insight_come_from_sqlite(self):
         self.repository.save(self.candidate())
         with patch.object(learning, "repository", return_value=self.repository):
