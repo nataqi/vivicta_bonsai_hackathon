@@ -11,7 +11,11 @@ from app.coaching import (
     TimedWord,
     TurnObservation,
 )
-from app.transcription import SpeakerTurnAssembler, emit_coached_observation
+from app.transcription import (
+    ReflectionTranscriptAssembler,
+    SpeakerTurnAssembler,
+    emit_coached_observation,
+)
 from app.post_meeting import store as post_meeting_store
 
 
@@ -150,6 +154,20 @@ class SpeakerTurnAssemblerTests(unittest.TestCase):
 
         self.assertEqual(observations[0].words[0].start_time_ms, 1000)
         self.assertNotIn("words", observations[0].turn)
+
+
+class ReflectionTranscriptAssemblerTests(unittest.TestCase):
+    def test_collects_only_final_single_speaker_text(self) -> None:
+        assembler = ReflectionTranscriptAssembler()
+
+        assembler.consume(result([word("interim", 0.0, 0.2, 0)], is_final=False))
+        assembler.consume(result([word("first", 0.0, 0.2, 0, "First.")]))
+        assembler.consume(result([word("thought", 0.3, 0.6, 0, "thought.")]))
+
+        self.assertEqual(assembler.text(), "First. thought.")
+
+    def test_empty_dictation_stays_empty(self) -> None:
+        self.assertEqual(ReflectionTranscriptAssembler().text(), "")
 
 
 def coaching_observation(

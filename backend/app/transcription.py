@@ -118,6 +118,26 @@ class SpeakerTurnAssembler:
         )
 
 
+class ReflectionTranscriptAssembler:
+    """Collect final, single-speaker Deepgram segments for reflection dictation."""
+
+    def __init__(self) -> None:
+        self._segments: list[str] = []
+
+    def consume(self, result: Any) -> None:
+        if not result.is_final:
+            return
+        alternatives = getattr(result.channel, "alternatives", [])
+        if not alternatives:
+            return
+        transcript = str(getattr(alternatives[0], "transcript", "")).strip()
+        if transcript:
+            self._segments.append(transcript)
+
+    def text(self) -> str:
+        return " ".join(self._segments).strip()
+
+
 async def _send_json(websocket: WebSocket, payload: dict[str, Any]) -> bool:
     try:
         await websocket.send_json(payload)
@@ -263,6 +283,113 @@ async def transcription_websocket(websocket: WebSocket) -> None:
         )
     finally:
         await coaching.close()
+        pending_tasks: list[asyncio.Task[Any]] = []
+        for task in (browser_task, deepgram_task):
+            if task is not None and not task.done():
+                task.cancel()
+                pending_tasks.append(task)
+        if pending_tasks:
+            await asyncio.gather(*pending_tasks, return_exceptions=True)
+        try:
+            await websocket.close()
+        except RuntimeError:
+            pass
+
+
+@router.websocket("/ws/reflection-dictation")
+async def reflection_dictation_websocket(websocket: WebSocket) -> None:
+    """Transcribe one temporary adviser dictation without coaching or persistence."""
+    await websocket.accept()
+    browser_task: asyncio.Task[str] | None = None
+    deepgram_task: asyncio.Task[None] | None = None
+    send_lock = asyncio.Lock()
+
+    async def send(payload: dict[str, Any]) -> bool:
+        async with send_lock:
+            return await _send_json(websocket, payload)
+
+    try:
+        deepgram = AsyncDeepgramClient(api_key=os.environ["DEEPGRAM_API_KEY"])
+        async with deepgram.listen.v1.connect(
+            model="nova-3",
+            language="en-US",
+            channels=1,
+            interim_results=True,
+            endpointing=500,
+            punctuate=True,
+            mip_opt_out=True,
+        ) as connection:
+            assembler = ReflectionTranscriptAssembler()
+            finalized = asyncio.Event()
+
+            async def receive_browser_audio() -> str:
+                while True:
+                    message = await websocket.receive()
+                    if message["type"] == "websocket.disconnect":
+                        return "disconnect"
+                    audio = message.get("bytes")
+                    if audio:
+                        await connection.send_media(audio)
+                        continue
+                    text = message.get("text")
+                    if not text:
+                        continue
+                    try:
+                        control = json.loads(text)
+                    except json.JSONDecodeError:
+                        await send({"type": "error", "message": "Invalid control message."})
+                        continue
+                    if control.get("type") == "stop":
+                        return "stop"
+
+            async def receive_deepgram_results() -> None:
+                async for result in connection:
+                    if not isinstance(result, ListenV1Results):
+                        continue
+                    assembler.consume(result)
+                    if result.from_finalize:
+                        finalized.set()
+
+            await send({"type": "session.ready"})
+            browser_task = asyncio.create_task(receive_browser_audio())
+            deepgram_task = asyncio.create_task(receive_deepgram_results())
+            done, _ = await asyncio.wait(
+                {browser_task, deepgram_task},
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+
+            if deepgram_task in done:
+                exception = deepgram_task.exception()
+                if exception:
+                    raise exception
+                raise RuntimeError("Deepgram stream closed unexpectedly")
+
+            if browser_task.result() == "stop":
+                await connection.send_finalize()
+                try:
+                    await asyncio.wait_for(finalized.wait(), timeout=2.0)
+                except TimeoutError:
+                    pass
+                await connection.send_close_stream()
+                try:
+                    await asyncio.wait_for(asyncio.shield(deepgram_task), timeout=1.0)
+                except TimeoutError:
+                    deepgram_task.cancel()
+                await send({"type": "transcript", "text": assembler.text()})
+            else:
+                await connection.send_finalize()
+                await connection.send_close_stream()
+    except WebSocketDisconnect:
+        pass
+    except Exception:
+        logger.exception("Reflection dictation failed")
+        await send(
+            {
+                "type": "error",
+                "message": "Reflection dictation stopped unexpectedly. Please try again.",
+            },
+        )
+    finally:
         pending_tasks: list[asyncio.Task[Any]] = []
         for task in (browser_task, deepgram_task):
             if task is not None and not task.done():

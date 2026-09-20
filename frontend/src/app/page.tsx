@@ -6,6 +6,7 @@ import {
   type CoachingArea,
   type TranscriptionStatus,
 } from "@/hooks/useLiveTranscription";
+import { useReflectionDictation } from "@/hooks/useReflectionDictation";
 
 const API_BASE = "http://localhost:8001";
 
@@ -88,6 +89,10 @@ export default function Home() {
     clearCompletedSession,
     isActive,
   } = useLiveTranscription();
+  const appendReflectionText = useCallback((text: string) => {
+    setReflectionDraft((current) => current.trim() ? `${current.trim()} ${text}` : text);
+  }, []);
+  const reflectionDictation = useReflectionDictation(appendReflectionText);
 
   useEffect(() => {
     activeSessionIdRef.current = completedSessionId;
@@ -270,6 +275,7 @@ export default function Home() {
   };
 
   const abandonMeeting = () => {
+    reflectionDictation.cancel();
     activeSessionIdRef.current = null;
     requestControllerRef.current?.abort();
     requestControllerRef.current = null;
@@ -291,6 +297,7 @@ export default function Home() {
   const finish = async () => {
     if (finishPendingRef.current) return;
     finishPendingRef.current = true;
+    reflectionDictation.cancel();
     const sessionId = completedSessionId;
     activeSessionIdRef.current = null;
     requestControllerRef.current?.abort();
@@ -349,6 +356,7 @@ export default function Home() {
   };
 
   const openReflection = () => {
+    reflectionDictation.cancel();
     setReflectionMessages([initialReflection]);
     setReflectionDraft("");
     setReflectionError(null);
@@ -438,7 +446,7 @@ export default function Home() {
     return <ReportErrorView message={reportError ?? "Feedback could not be prepared."} finishing={finishPending} onRetry={() => completedSessionId && void requestReport(completedSessionId)} onFinish={() => void finish()} />;
   }
   if (phase === "reflection" && report) {
-    return <ReflectionView messages={reflectionMessages} draft={reflectionDraft} error={reflectionError} complete={reflectionComplete} sending={reflectionPending} finishing={finishPending} onDraftChange={setReflectionDraft} onSend={() => void sendReflection()} onBack={() => setPhase("report")} onFinish={() => void finish()} />;
+    return <ReflectionView messages={reflectionMessages} draft={reflectionDraft} error={reflectionError} dictationStatus={reflectionDictation.status} dictationError={reflectionDictation.error} complete={reflectionComplete} sending={reflectionPending} finishing={finishPending} onDraftChange={setReflectionDraft} onSend={() => void sendReflection()} onStartDictation={() => void reflectionDictation.start()} onStopDictation={reflectionDictation.stop} onBack={() => { reflectionDictation.cancel(); setPhase("report"); }} onFinish={() => void finish()} />;
   }
 
   return (
@@ -493,10 +501,16 @@ function ReportErrorView({ message, finishing, onRetry, onFinish }: { message: s
   return <main className="grid min-h-screen place-items-center bg-[#f7f9ff] px-6 text-[#17234a]"><section className="max-w-lg rounded-[1.7rem] border border-[#f0d2c8] bg-white p-8 text-center shadow-[0_20px_55px_rgba(48,59,113,.09)]"><h1 className="text-2xl font-bold">Feedback needs another try</h1><p className="mt-3 leading-7 text-[#687491]">{message}</p><div className="mt-7 flex justify-center gap-3"><ActionButton disabled={finishing} onClick={onRetry}>Retry</ActionButton><ActionButton variant="secondary" disabled={finishing} onClick={onFinish}>{finishing ? "Finishing…" : "Finish"}</ActionButton></div></section></main>;
 }
 
-function ReflectionView({ messages, draft, error, complete, sending, finishing, onDraftChange, onSend, onBack, onFinish }: { messages: ReflectionMessage[]; draft: string; error: string | null; complete: boolean; sending: boolean; finishing: boolean; onDraftChange: (value: string) => void; onSend: () => void; onBack: () => void; onFinish: () => void }) {
+function ReflectionView({ messages, draft, error, dictationStatus, dictationError, complete, sending, finishing, onDraftChange, onSend, onStartDictation, onStopDictation, onBack, onFinish }: { messages: ReflectionMessage[]; draft: string; error: string | null; dictationStatus: "idle" | "listening" | "processing" | "error"; dictationError: string | null; complete: boolean; sending: boolean; finishing: boolean; onDraftChange: (value: string) => void; onSend: () => void; onStartDictation: () => void; onStopDictation: () => void; onBack: () => void; onFinish: () => void }) {
   const takeaway = messages.find((message) => message.text.startsWith("TAKEAWAY_FOR_NEXT_TIME:"))?.text.replace("TAKEAWAY_FOR_NEXT_TIME:", "");
   const visibleMessages = messages.filter((message) => !message.text.startsWith("TAKEAWAY_FOR_NEXT_TIME:"));
-  return <main className="min-h-screen bg-[#f7f9ff] px-5 py-8 text-[#17234a] sm:px-8"><div className="mx-auto max-w-3xl"><header className="flex items-center justify-between gap-4"><Brand /><button type="button" disabled={finishing} onClick={onBack} className="rounded-xl px-3 py-2 text-sm font-semibold text-[#536080] hover:bg-white disabled:cursor-not-allowed disabled:opacity-50">← Back to report</button></header><section className="mt-8 overflow-hidden rounded-[1.7rem] bg-white shadow-[0_20px_55px_rgba(48,59,113,.09)]"><div className="border-b border-[#ebedf5] px-6 py-5"><p className="text-sm font-bold tracking-wide text-[#5146e5]">A SHORT REFLECTION</p><h1 className="mt-1 text-2xl font-bold tracking-[-.03em]">Make the learning your own.</h1><p className="mt-2 text-sm leading-6 text-[#687491]">Take a moment to notice what you want to carry into the next conversation.</p></div><div className="space-y-3 p-5 sm:p-6">{visibleMessages.map((message, index) => <div key={`${message.author}-${index}`} className={`flex ${message.author === "advisor" ? "justify-end" : "justify-start"}`}><div className={`max-w-[88%] rounded-[1.25rem] px-4 py-3 text-sm leading-6 sm:text-base ${message.author === "advisor" ? "rounded-br-md bg-[#5146e5] text-white" : "rounded-bl-md bg-[#eef0ff] text-[#29345f]"}`}>{message.author === "coach" && <p className="mb-1 text-xs font-bold tracking-wide text-[#5146e5]">YOUR COACH</p>}{message.text}</div></div>)}</div>{!complete && <div className="border-t border-[#ebedf5] bg-[#fbfcff] p-4"><form onSubmit={(event) => { event.preventDefault(); onSend(); }} className="flex gap-3"><label className="sr-only" htmlFor="reflection">Your reflection</label><input id="reflection" value={draft} disabled={sending || finishing} onChange={(event) => onDraftChange(event.target.value)} placeholder="Write your reflection…" className="min-h-12 flex-1 rounded-2xl border border-[#dce1ee] bg-white px-4 text-base outline-none placeholder:text-[#8a94ad] focus:border-[#5146e5] focus:ring-4 focus:ring-[#e5e3ff] disabled:opacity-60" /><ActionButton type="submit" disabled={!draft.trim() || sending || finishing}>{sending ? "Sending…" : "Send"}</ActionButton></form>{error && <p role="alert" className="mt-3 text-sm font-semibold text-[#9a4a32]">{error}</p>}</div>}</section>{complete && takeaway && <section className="mt-4 rounded-[1.4rem] border border-[#cedcff] bg-[#eef3ff] p-5"><p className="text-xs font-bold tracking-[.12em] text-[#4059b8]">TAKEAWAY FOR NEXT TIME</p><p className="mt-1 text-base font-bold text-[#27325e]">{takeaway}</p></section>}<div className="mt-5 flex justify-end"><ActionButton disabled={finishing} onClick={onFinish}>{finishing ? "Finishing…" : "Finish"}</ActionButton></div></div></main>;
+  const dictationActive = dictationStatus === "listening" || dictationStatus === "processing";
+  const dictationMessage = dictationStatus === "listening" ? "Listening…" : dictationStatus === "processing" ? "Transcribing…" : dictationError;
+  return <main className="min-h-screen bg-[#f7f9ff] px-5 py-8 text-[#17234a] sm:px-8"><div className="mx-auto max-w-3xl"><header className="flex items-center justify-between gap-4"><Brand /><button type="button" disabled={finishing || dictationActive} onClick={onBack} className="rounded-xl px-3 py-2 text-sm font-semibold text-[#536080] hover:bg-white disabled:cursor-not-allowed disabled:opacity-50">← Back to report</button></header><section className="mt-8 overflow-hidden rounded-[1.7rem] bg-white shadow-[0_20px_55px_rgba(48,59,113,.09)]"><div className="border-b border-[#ebedf5] px-6 py-5"><p className="text-sm font-bold tracking-wide text-[#5146e5]">A SHORT REFLECTION</p><h1 className="mt-1 text-2xl font-bold tracking-[-.03em]">Make the learning your own.</h1><p className="mt-2 text-sm leading-6 text-[#687491]">Take a moment to notice what you want to carry into the next conversation.</p></div><div className="space-y-3 p-5 sm:p-6">{visibleMessages.map((message, index) => <div key={`${message.author}-${index}`} className={`flex ${message.author === "advisor" ? "justify-end" : "justify-start"}`}><div className={`max-w-[88%] rounded-[1.25rem] px-4 py-3 text-sm leading-6 sm:text-base ${message.author === "advisor" ? "rounded-br-md bg-[#5146e5] text-white" : "rounded-bl-md bg-[#eef0ff] text-[#29345f]"}`}>{message.author === "coach" && <p className="mb-1 text-xs font-bold tracking-wide text-[#5146e5]">YOUR COACH</p>}{message.text}</div></div>)}</div>{!complete && <div className="border-t border-[#ebedf5] bg-[#fbfcff] p-4"><form onSubmit={(event) => { event.preventDefault(); onSend(); }} className="flex gap-3"><label className="sr-only" htmlFor="reflection">Your reflection</label><div className="flex min-w-0 flex-1 gap-2"><input id="reflection" value={draft} disabled={sending || finishing || dictationActive} onChange={(event) => onDraftChange(event.target.value)} placeholder="Write your reflection…" className="min-h-12 min-w-0 flex-1 rounded-2xl border border-[#dce1ee] bg-white px-4 text-base outline-none placeholder:text-[#8a94ad] focus:border-[#5146e5] focus:ring-4 focus:ring-[#e5e3ff] disabled:opacity-60" /><button type="button" aria-label={dictationActive ? "Stop reflection dictation" : "Start reflection dictation"} title={dictationActive ? "Stop dictation" : "Dictate reflection"} disabled={sending || finishing || dictationStatus === "processing"} onClick={dictationActive ? onStopDictation : onStartDictation} className={`grid h-12 w-12 shrink-0 place-items-center rounded-2xl border text-lg transition focus:outline-none focus:ring-4 focus:ring-[#c9c5ff] disabled:cursor-not-allowed disabled:opacity-50 ${dictationStatus === "listening" ? "border-[#5146e5] bg-[#eceaff] text-[#5146e5]" : "border-[#dce1ee] bg-white text-[#536080] hover:border-[#8c83ff]"}`}><DictationIcon active={dictationStatus === "listening"} /></button></div><ActionButton type="submit" disabled={!draft.trim() || sending || finishing || dictationActive}>{sending ? "Sending…" : "Send"}</ActionButton></form>{dictationMessage && <p role={dictationError ? "alert" : "status"} className={`mt-3 text-sm font-semibold ${dictationError ? "text-[#9a4a32]" : "text-[#536080]"}`}>{dictationMessage}</p>}{error && <p role="alert" className="mt-3 text-sm font-semibold text-[#9a4a32]">{error}</p>}</div>}</section>{complete && takeaway && <section className="mt-4 rounded-[1.4rem] border border-[#cedcff] bg-[#eef3ff] p-5"><p className="text-xs font-bold tracking-[.12em] text-[#4059b8]">TAKEAWAY FOR NEXT TIME</p><p className="mt-1 text-base font-bold text-[#27325e]">{takeaway}</p></section>}<div className="mt-5 flex justify-end"><ActionButton variant="secondary" disabled={finishing || dictationActive} onClick={onFinish}>{finishing ? "Finishing…" : "Finish"}</ActionButton></div></div></main>;
+}
+
+function DictationIcon({ active }: { active: boolean }) {
+  return active ? <svg aria-hidden="true" viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="6" y="6" width="12" height="12" rx="1" /></svg> : <svg aria-hidden="true" viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="2" width="6" height="12" rx="3" /><path d="M5 10a7 7 0 0 0 14 0M12 19v3M8 22h8" /></svg>;
 }
 
 function ActionButton({ children, onClick, variant = "primary", type = "button", disabled = false }: { children: React.ReactNode; onClick?: () => void; variant?: "primary" | "secondary"; type?: "button" | "submit"; disabled?: boolean }) {
