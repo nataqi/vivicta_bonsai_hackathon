@@ -7,6 +7,9 @@ import {
   type TranscriptionStatus,
 } from "@/hooks/useLiveTranscription";
 import { useReflectionDictation } from "@/hooks/useReflectionDictation";
+import { useKeyMomentReplay, type KeyMoment } from "@/hooks/useKeyMomentReplay";
+import { KeyMomentCard } from "@/components/replay/KeyMomentCard";
+import { ForgetReceipt, type ForgetReceiptData } from "@/components/replay/ForgetReceipt";
 
 const API_BASE = "http://localhost:8001";
 
@@ -53,6 +56,8 @@ export default function Home() {
   const [focusHydrated, setFocusHydrated] = useState(false);
   const [phase, setPhase] = useState<Phase>("idle");
   const [report, setReport] = useState<PostMeetingReport | null>(null);
+  const [keyMoment, setKeyMoment] = useState<KeyMoment | null>(null);
+  const [receipt, setReceipt] = useState<ForgetReceiptData | null>(null);
   const [reportError, setReportError] = useState<string | null>(null);
   const [reflectionMessages, setReflectionMessages] = useState<ReflectionMessage[]>([
     initialReflection,
@@ -81,14 +86,18 @@ export default function Home() {
   const {
     status,
     turns,
+    sessionTurns,
     completedSessionId,
     error: transcriptionError,
     currentNudge,
+    getRecording,
     start,
     stop,
     clearCompletedSession,
     isActive,
   } = useLiveTranscription();
+  const replay = useKeyMomentReplay(getRecording);
+  const resetReplay = replay.reset;
   const appendReflectionText = useCallback((text: string) => {
     setReflectionDraft((current) => current.trim() ? `${current.trim()} ${text}` : text);
   }, []);
@@ -195,10 +204,11 @@ export default function Home() {
         signal: controller.signal,
       });
       if (!response.ok) throw new Error(await readApiError(response));
-      const payload = (await response.json()) as { report?: PostMeetingReport };
+      const payload = (await response.json()) as { report?: PostMeetingReport; key_moment?: KeyMoment | null };
       if (!payload.report) throw new Error("Feedback was not returned.");
       if (controller.signal.aborted || activeSessionIdRef.current !== sessionId) return;
       setReport(payload.report);
+      setKeyMoment(payload.key_moment ?? null);
       setPhase("report");
     } catch (error) {
       if (requestControllerRef.current !== controller) return;
@@ -227,6 +237,8 @@ export default function Home() {
       timers.push(
         window.setTimeout(() => {
           clearCompletedSession();
+          resetReplay();
+          setKeyMoment(null);
           setReport(null);
           setReportError(message);
           setReflectionMessages([initialReflection]);
@@ -241,7 +253,7 @@ export default function Home() {
       );
     }
     return () => timers.forEach((timer) => window.clearTimeout(timer));
-  }, [clearCompletedSession, completedSessionId, phase, report, requestReport, status, transcriptionError]);
+  }, [clearCompletedSession, completedSessionId, phase, report, requestReport, resetReplay, status, transcriptionError]);
 
   const toggleFocus = (area: CoachingArea) => {
     if (!focusHydrated || isActive || phase !== "idle") return;
@@ -258,6 +270,9 @@ export default function Home() {
 
   const beginMeeting = () => {
     if (!focusHydrated) return;
+    resetReplay();
+    setKeyMoment(null);
+    setReceipt(null);
     setReport(null);
     setReportError(null);
     setReflectionError(null);
@@ -276,10 +291,17 @@ export default function Home() {
 
   const abandonMeeting = () => {
     reflectionDictation.cancel();
+    const abandonedSessionId = completedSessionId;
     activeSessionIdRef.current = null;
     requestControllerRef.current?.abort();
     requestControllerRef.current = null;
     clearCompletedSession();
+    resetReplay();
+    setKeyMoment(null);
+    if (abandonedSessionId) {
+      // Best effort: also removes any temporary cloned voice at the provider.
+      void fetch(`${API_BASE}/post-meeting/${abandonedSessionId}`, { method: "DELETE" }).catch(() => undefined);
+    }
     setReport(null);
     setReportError(null);
     setReflectionMessages([initialReflection]);
@@ -305,7 +327,11 @@ export default function Home() {
     setFinishPending(true);
     setReflectionPending(false);
     let learningSaved = true;
+    let voice: ForgetReceiptData["voice"] = "none";
+    const voiceUsed = replay.betterStatus !== "idle";
+    replay.stop();
     if (sessionId) {
+      voice = await deleteClonedVoice(sessionId, voiceUsed);
       const completionController = new AbortController();
       const completionTimeout = window.setTimeout(() => completionController.abort(), 5_000);
       try {
@@ -335,6 +361,9 @@ export default function Home() {
       }
     }
     clearCompletedSession();
+    resetReplay();
+    setKeyMoment(null);
+    setReceipt({ learningSaved: learningSaved && Boolean(sessionId), voice });
     setReport(null);
     setReportError(null);
     setReflectionMessages([initialReflection]);
@@ -356,6 +385,7 @@ export default function Home() {
   };
 
   const openReflection = () => {
+    replay.stop();
     reflectionDictation.cancel();
     setReflectionMessages([initialReflection]);
     setReflectionDraft("");
@@ -440,7 +470,17 @@ export default function Home() {
     return <TransitionScreen />;
   }
   if (phase === "report" && report) {
-    return <ReportView report={report} finishing={finishPending} onReflect={openReflection} onFinish={() => void finish()} />;
+    const keyMomentCard = keyMoment ? (
+      <KeyMomentCard
+        moment={keyMoment}
+        areaLabel={labelForArea(keyMoment.area)}
+        replay={replay}
+        disabled={finishPending}
+        onPlayOriginal={() => void replay.playOriginal(keyMoment)}
+        onPlayBetter={() => completedSessionId && void replay.playBetter(completedSessionId, sessionTurns)}
+      />
+    ) : null;
+    return <ReportView report={report} keyMomentCard={keyMomentCard} finishing={finishPending} onReflect={openReflection} onFinish={() => void finish()} />;
   }
   if (phase === "report_error") {
     return <ReportErrorView message={reportError ?? "Feedback could not be prepared."} finishing={finishPending} onRetry={() => completedSessionId && void requestReport(completedSessionId)} onFinish={() => void finish()} />;
@@ -453,10 +493,30 @@ export default function Home() {
     <main className="min-h-screen bg-[#f7f9ff] px-5 py-6 text-[#17234a] sm:px-8 lg:px-12">
       <div className="mx-auto flex min-h-[calc(100vh-3rem)] max-w-6xl flex-col">
         <header className="flex flex-wrap items-center justify-between gap-4"><Brand />{isMeeting && <div className="flex items-center gap-3"><button type="button" onClick={abandonMeeting} className="rounded-xl px-3 py-2 text-sm font-semibold text-[#65708d] transition hover:bg-white hover:text-[#34405f] focus:outline-none focus:ring-4 focus:ring-[#e5e3ff]">← Home</button><StatusBadge status={status} /></div>}</header>
+        {receipt && !isMeeting && <ForgetReceipt data={receipt} onDismiss={() => setReceipt(null)} />}
         {isMeeting ? <MeetingView focusAreas={focusAreas} turns={turns} currentNudge={currentNudge} status={status} error={effectiveError} onEnd={endMeeting} /> : <HomeView focusAreas={focusAreas} focusHydrated={focusHydrated} error={effectiveError} recentInsight={recentInsight} historyState={historyState} focusSaveError={focusSaveError} learningWarning={learningWarning} onToggle={toggleFocus} onStart={beginMeeting} />}
       </div>
     </main>
   );
+}
+
+async function deleteClonedVoice(sessionId: string, voiceUsed: boolean): Promise<ForgetReceiptData["voice"]> {
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), 8_000);
+  try {
+    const response = await fetch(`${API_BASE}/post-meeting/${sessionId}/voice`, {
+      method: "DELETE",
+      signal: controller.signal,
+    });
+    if (!response.ok) throw new Error("Voice deletion failed.");
+    const payload = (await response.json()) as { hadVoice?: boolean; voiceDeleted?: boolean };
+    if (payload.voiceDeleted === true) return payload.hadVoice ? "deleted" : "none";
+    return voiceUsed ? "unconfirmed" : "none";
+  } catch {
+    return voiceUsed ? "unconfirmed" : "none";
+  } finally {
+    window.clearTimeout(timeout);
+  }
 }
 
 async function readApiError(response: Response): Promise<string> {
@@ -489,8 +549,8 @@ function TransitionScreen() {
   return <main className="grid min-h-screen place-items-center bg-[#f7f9ff] px-6 text-center text-[#17234a]"><section className="max-w-md rounded-[1.7rem] border border-[#d8d5ff] bg-white p-8 shadow-[0_20px_55px_rgba(48,59,113,.09)]"><span className="mx-auto grid h-16 w-16 place-items-center rounded-full bg-[#eceaff] text-2xl text-[#5146e5]">⌁</span><h1 className="mt-6 text-2xl font-bold">Preparing your feedback…</h1><p className="mt-3 leading-7 text-[#687491]">This will only take a moment.</p></section></main>;
 }
 
-function ReportView({ report, finishing, onReflect, onFinish }: { report: PostMeetingReport; finishing: boolean; onReflect: () => void; onFinish: () => void }) {
-  return <main className="min-h-screen bg-[#f7f9ff] px-5 py-6 text-[#17234a] sm:px-8 lg:px-12"><div className="mx-auto max-w-5xl"><header className="flex items-center justify-between"><Brand /><button type="button" disabled={finishing} onClick={onFinish} className="rounded-xl px-3 py-2 text-sm font-semibold text-[#65708d] transition hover:bg-white hover:text-[#34405f] focus:outline-none focus:ring-4 focus:ring-[#e5e3ff] disabled:cursor-not-allowed disabled:opacity-50">← Home</button></header><h1 className="mt-6 text-center text-3xl font-bold tracking-[-.035em] sm:text-4xl">A few things to carry forward.</h1><section className="mt-6 grid gap-4 md:grid-cols-2"><ReportCard title="What went well" items={report.strengths} tone="blue" /><ReportCard title="What to improve" items={report.improvements} tone="lavender" /></section><section className="mt-4 rounded-[1.4rem] border border-[#dfe4f3] bg-white px-5 py-4"><p className="text-sm font-bold text-[#5146e5]">Your focus</p><p className="mt-1.5 text-sm font-semibold leading-6 text-[#445070]">{report.focus_summary}</p></section><div className="mt-5 flex flex-col justify-center gap-3 sm:flex-row"><ActionButton disabled={finishing} onClick={onReflect}>Reflect <span className="ml-2">→</span></ActionButton><ActionButton variant="secondary" disabled={finishing} onClick={onFinish}>{finishing ? "Finishing…" : "Finish"}</ActionButton></div></div></main>;
+function ReportView({ report, keyMomentCard, finishing, onReflect, onFinish }: { report: PostMeetingReport; keyMomentCard: React.ReactNode; finishing: boolean; onReflect: () => void; onFinish: () => void }) {
+  return <main className="min-h-screen bg-[#f7f9ff] px-5 py-6 text-[#17234a] sm:px-8 lg:px-12"><div className="mx-auto max-w-5xl"><header className="flex items-center justify-between"><Brand /><button type="button" disabled={finishing} onClick={onFinish} className="rounded-xl px-3 py-2 text-sm font-semibold text-[#65708d] transition hover:bg-white hover:text-[#34405f] focus:outline-none focus:ring-4 focus:ring-[#e5e3ff] disabled:cursor-not-allowed disabled:opacity-50">← Home</button></header><h1 className="mt-6 text-center text-3xl font-bold tracking-[-.035em] sm:text-4xl">A few things to carry forward.</h1><section className="mt-6 grid gap-4 md:grid-cols-2"><ReportCard title="What went well" items={report.strengths} tone="blue" /><ReportCard title="What to improve" items={report.improvements} tone="lavender" /></section><section className="mt-4 rounded-[1.4rem] border border-[#dfe4f3] bg-white px-5 py-4"><p className="text-sm font-bold text-[#5146e5]">Your focus</p><p className="mt-1.5 text-sm font-semibold leading-6 text-[#445070]">{report.focus_summary}</p></section>{keyMomentCard}<div className="mt-5 flex flex-col justify-center gap-3 sm:flex-row"><ActionButton disabled={finishing} onClick={onReflect}>Reflect <span className="ml-2">→</span></ActionButton><ActionButton variant="secondary" disabled={finishing} onClick={onFinish}>{finishing ? "Finishing…" : "Finish"}</ActionButton></div></div></main>;
 }
 
 function ReportCard({ title, items, tone }: { title: string; items: string[]; tone: "blue" | "lavender" }) {

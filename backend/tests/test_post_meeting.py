@@ -70,6 +70,7 @@ class CapturingCompletions:
                 reflection_context="The adviser can practise acknowledging concerns before solutions.",
                 strength_areas=[CoachingArea.OPEN_QUESTIONS],
                 improvement_areas=[CoachingArea.STAY_BEFORE_SOLVING],
+                key_moment=None,
             )
         elif schema_name == "reflectionfollowup":
             parsed = post_meeting.ReflectionFollowUp(
@@ -117,6 +118,7 @@ class BlockingAI:
             reflection_context="A bounded context.",
             strength_areas=[CoachingArea.OPEN_QUESTIONS],
             improvement_areas=[CoachingArea.STAY_BEFORE_SOLVING],
+            key_moment=None,
         )
 
 
@@ -267,7 +269,7 @@ class PostMeetingTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertIn("string_type", diagnostic)
         self.assertIn("focus_summary", diagnostic)
-        self.assertIn("count=3", diagnostic)
+        self.assertIn("count=4", diagnostic)
         self.assertNotIn("CUSTOMER SECRET", diagnostic)
         self.assertIsNone(post_meeting.store.get(session_id).report)
 
@@ -280,6 +282,7 @@ class PostMeetingTests(unittest.IsolatedAsyncioTestCase):
             "reflection_context": "The adviser noticed a useful communication pattern " * 20,
             "strength_areas": [CoachingArea.OPEN_QUESTIONS.value],
             "improvement_areas": [CoachingArea.STAY_BEFORE_SOLVING.value],
+            "key_moment": None,
         }
         post_meeting._ai_service = post_meeting.PostMeetingAI(
             SimpleNamespace(
@@ -341,6 +344,7 @@ class PostMeetingTests(unittest.IsolatedAsyncioTestCase):
                 CoachingArea.STAY_BEFORE_SOLVING.value,
                 CoachingArea.OPEN_QUESTIONS.value,
             ],
+            "key_moment": None,
         }
         post_meeting._ai_service = post_meeting.PostMeetingAI(
             SimpleNamespace(
@@ -375,6 +379,7 @@ class PostMeetingTests(unittest.IsolatedAsyncioTestCase):
             "reflection_context": "A bounded context.",
             "strength_areas": ["not_a_coaching_area"],
             "improvement_areas": [CoachingArea.STAY_BEFORE_SOLVING.value],
+            "key_moment": None,
         }
         post_meeting._ai_service = post_meeting.PostMeetingAI(
             SimpleNamespace(

@@ -83,6 +83,8 @@ export function useLiveTranscription() {
   const recorderRef = useRef<MediaRecorder | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const sendChainRef = useRef<Promise<void>>(Promise.resolve());
+  // Temporary, in-browser only: kept so the adviser can replay a key moment after the meeting.
+  const recordingChunksRef = useRef<Blob[]>([]);
   const generationRef = useRef(0);
   const mountedRef = useRef(true);
   const expectedCloseRef = useRef(false);
@@ -136,6 +138,7 @@ export function useLiveTranscription() {
     stopRequestedRef.current = false;
     acceptVisibleLiveContentRef.current = true;
     acceptSessionTurnsRef.current = true;
+    recordingChunksRef.current = [];
     const generation = ++generationRef.current;
 
     clearLiveContent();
@@ -197,6 +200,7 @@ export function useLiveTranscription() {
       expectedCloseRef.current = true;
       acceptVisibleLiveContentRef.current = false;
       acceptSessionTurnsRef.current = false;
+      recordingChunksRef.current = [];
       disposeSession();
       clearLiveContent();
       setSessionTurns([]);
@@ -229,6 +233,7 @@ export function useLiveTranscription() {
         recorderRef.current = recorder;
         recorder.ondataavailable = (audioEvent) => {
           if (!audioEvent.data.size) return;
+          if (generation === generationRef.current) recordingChunksRef.current.push(audioEvent.data);
           sendChainRef.current = sendChainRef.current
             .then(async () => {
               const audio = await audioEvent.data.arrayBuffer();
@@ -318,6 +323,7 @@ export function useLiveTranscription() {
     stopRequestedRef.current = false;
     acceptVisibleLiveContentRef.current = false;
     acceptSessionTurnsRef.current = false;
+    recordingChunksRef.current = [];
     disposeSession();
     setSessionTurns([]);
     setCompletedSessionId(null);
@@ -353,6 +359,7 @@ export function useLiveTranscription() {
         generationRef.current += 1;
         expectedCloseRef.current = true;
         acceptSessionTurnsRef.current = false;
+        recordingChunksRef.current = [];
         disposeSession();
         clearLiveContent();
         setSessionTurns([]);
@@ -408,9 +415,15 @@ export function useLiveTranscription() {
       acceptSessionTurnsRef.current = false;
       generationRef.current += 1;
       expectedCloseRef.current = true;
+      recordingChunksRef.current = [];
       disposeSession();
     };
   }, [disposeSession]);
+
+  const getRecording = useCallback(() => {
+    const chunks = recordingChunksRef.current;
+    return chunks.length ? new Blob(chunks, { type: AUDIO_MIME_TYPE }) : null;
+  }, []);
 
   return {
     status,
@@ -419,6 +432,7 @@ export function useLiveTranscription() {
     completedSessionId,
     error,
     currentNudge,
+    getRecording,
     start,
     stop,
     clearCompletedSession,

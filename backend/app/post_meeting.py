@@ -6,7 +6,7 @@ import logging
 import re
 import time
 from dataclasses import dataclass, field
-from typing import Any, Awaitable, Callable
+from typing import Any, Awaitable, Callable, Literal
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException
@@ -41,6 +41,11 @@ BOUNDED_TEXT_LIMITS = {
     "takeaway": 160,
     "reflection_context": 600,
     "coach_message": 300,
+}
+KEY_MOMENT_TEXT_LIMITS = {
+    "customer_context": 160,
+    "better_answer": 260,
+    "why": 160,
 }
 BOUNDED_LIST_ITEM_LIMITS = {
     "strengths": 180,
@@ -119,10 +124,37 @@ class PostMeetingReport(BaseModel):
         return cleaned
 
 
+class KeyMoment(BaseModel):
+    """One adviser turn worth replaying, with a generic paraphrase of the context."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    turn_id: str = Field(min_length=1, max_length=64)
+    area: CoachingArea
+    kind: Literal["improvement", "strength"]
+    customer_context: str = Field(min_length=1, max_length=160)
+    better_answer: str = Field(min_length=1, max_length=260)
+    why: str = Field(min_length=1, max_length=160)
+
+    @field_validator("turn_id", "customer_context", "better_answer", "why")
+    @classmethod
+    def clean_key_moment_text(cls, value: str) -> str:
+        cleaned = value.strip()
+        if not cleaned:
+            raise ValueError("Key moment text must be non-empty")
+        return cleaned
+
+
+class KeyMomentView(KeyMoment):
+    start_time_ms: int
+    end_time_ms: int
+
+
 class InternalReport(PostMeetingReport):
     reflection_context: str = Field(min_length=1, max_length=600)
     strength_areas: list[CoachingArea] = Field(min_length=0, max_length=2)
     improvement_areas: list[CoachingArea] = Field(min_length=0, max_length=2)
+    key_moment: KeyMoment | None = Field(...)
 
     @field_validator("reflection_context")
     @classmethod
@@ -193,6 +225,7 @@ class ReflectionResponse(BaseModel):
 
 class ReportResponse(BaseModel):
     report: PostMeetingReport
+    key_moment: KeyMomentView | None = None
 
 
 @dataclass(frozen=True)
@@ -217,7 +250,10 @@ class PostMeetingSession:
     reflection_messages: list[dict[str, str]] = field(default_factory=list)
     processed_reflection_requests: dict[str, ReflectionResponse] = field(default_factory=dict)
     reflection_reply_count: int = 0
+    key_moment: KeyMoment | None = None
+    voice_id: str | None = None
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    voice_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     expires_at: float = 0.0
 
 
@@ -225,12 +261,18 @@ class PostMeetingStore:
     def __init__(self, ttl_seconds: float = SESSION_TTL_SECONDS) -> None:
         self.ttl_seconds = ttl_seconds
         self._sessions: dict[str, PostMeetingSession] = {}
+        # Set by app.voice so a provider-side cloned voice is removed with its session.
+        self.voice_discard_hook: Callable[[str], None] | None = None
+
+    def _discard(self, session: PostMeetingSession | None) -> None:
+        if session is not None and session.voice_id and self.voice_discard_hook is not None:
+            self.voice_discard_hook(session.voice_id)
 
     def _purge_expired(self) -> None:
         now = time.monotonic()
         for session_id, session in tuple(self._sessions.items()):
             if session.expires_at <= now:
-                self._sessions.pop(session_id, None)
+                self._discard(self._sessions.pop(session_id, None))
 
     def register(self, session_id: str, data: CompletedMeetingData) -> PostMeetingSession:
         self._purge_expired()
@@ -258,9 +300,11 @@ class PostMeetingStore:
 
     def delete(self, session_id: str) -> None:
         self._purge_expired()
-        self._sessions.pop(session_id, None)
+        self._discard(self._sessions.pop(session_id, None))
 
     def clear(self) -> None:
+        for session in self._sessions.values():
+            self._discard(session)
         self._sessions.clear()
 
 
@@ -313,7 +357,16 @@ customer summaries, customer quotations, names, or customer-specific details. Ne
 Choose at most two concise strengths and two actionable improvements. Also classify each selected
 strength and improvement using distinct canonical coaching areas with no duplicates, using only the
 five canonical coaching area identifiers in the schema.
-The reflection_context must be a short generic summary of adviser behavior, with no customer details or quotes."""
+The reflection_context must be a short generic summary of adviser behavior, with no customer details or quotes.
+Also choose one key_moment for the adviser to replay: a single adviser turn, referenced by the exact id
+of one finalized turn whose speaker is "advisor". Prefer the most coachable improvement moment,
+prioritizing selected focus areas, and set kind to "improvement". Only if there is no improvement
+moment, choose the adviser's best moment and set kind to "strength". Use null for key_moment if no
+adviser turn is suitable. For the key_moment, customer_context is a generic paraphrase of what the
+customer conveyed (no quotes, names, numbers, or identifying details), better_answer is what the
+adviser could say instead (or an even stronger version of a strength) in first person, one or two short
+sentences of roughly the same length as the original turn, warm and natural, with no financial advice
+or figures, and why is one short line explaining what makes the better answer work."""
         parsed = await self._parse(
             InternalReport,
             instructions,
@@ -322,9 +375,12 @@ The reflection_context must be a short generic summary of adviser behavior, with
             timeout=self.report_timeout,
         )
         try:
-            return InternalReport.model_validate(parsed)
+            report = InternalReport.model_validate(parsed)
         except Exception as error:
             raise PostMeetingAIError("Invalid report output") from error
+        if report.key_moment is not None and find_advisor_turn(snapshot, report.key_moment.turn_id) is None:
+            report = report.model_copy(update={"key_moment": None})
+        return report
 
     async def generate_reflection_follow_up(
         self,
@@ -441,6 +497,14 @@ The reflection_context must be a short generic summary of adviser behavior, with
                 normalized[field_name] = [
                     bounded_text(item, limit) if isinstance(item, str) else item for item in value
                 ]
+        key_moment = normalized.get("key_moment")
+        if isinstance(key_moment, dict):
+            normalized["key_moment"] = {
+                name: bounded_text(value, KEY_MOMENT_TEXT_LIMITS[name])
+                if name in KEY_MOMENT_TEXT_LIMITS and isinstance(value, str)
+                else value
+                for name, value in key_moment.items()
+            }
         try:
             return schema.model_validate(normalized)
         except ValidationError as error:
@@ -476,6 +540,27 @@ def build_report_payload(snapshot: CompletedMeetingSnapshot) -> dict[str, object
         "semanticEvents": [event_payload(event) for event in snapshot.semantic_events],
         "displayedNudges": [nudge_payload(nudge) for nudge in snapshot.nudges],
     }
+
+
+def find_advisor_turn(snapshot: CompletedMeetingSnapshot, turn_id: str) -> dict[str, object] | None:
+    for turn in snapshot.turns:
+        if turn.get("id") == turn_id and turn.get("speaker") == "advisor":
+            return turn
+    return None
+
+
+def key_moment_view(session: PostMeetingSession) -> KeyMomentView | None:
+    moment = session.key_moment
+    if moment is None:
+        return None
+    turn = find_advisor_turn(session.snapshot, moment.turn_id)
+    if turn is None:
+        return None
+    return KeyMomentView(
+        **moment.model_dump(),
+        start_time_ms=int(turn["startTimeMs"]),
+        end_time_ms=int(turn["endTimeMs"]),
+    )
 
 
 def event_payload(event: DetectedEvent) -> dict[str, object]:
@@ -544,7 +629,7 @@ async def create_report(session_id: str) -> ReportResponse:
     session = _session_or_404(session_id)
     async with session.lock:
         if session.report is not None:
-            return ReportResponse(report=session.report)
+            return ReportResponse(report=session.report, key_moment=key_moment_view(session))
         if not session.snapshot.turns:
             raise HTTPException(
                 status_code=422,
@@ -565,13 +650,14 @@ async def create_report(session_id: str) -> ReportResponse:
             )
         session.report = PostMeetingReport.model_validate(
             generated.model_dump(
-                exclude={"reflection_context", "strength_areas", "improvement_areas"}
+                exclude={"reflection_context", "strength_areas", "improvement_areas", "key_moment"}
             )
         )
+        session.key_moment = generated.key_moment
         session.reflection_context = generated.reflection_context
         session.strength_areas = tuple(generated.strength_areas)
         session.improvement_areas = tuple(generated.improvement_areas)
-        return ReportResponse(report=session.report)
+        return ReportResponse(report=session.report, key_moment=key_moment_view(session))
 
 
 @router.post("/post-meeting/{session_id}/reflection", response_model=ReflectionResponse)

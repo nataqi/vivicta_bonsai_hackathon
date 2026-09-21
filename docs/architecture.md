@@ -545,7 +545,28 @@ The reflection should normally remain around 2–3 exchanges / approximately 60�
 
 It should not become an unrestricted generic chatbot conversation.
 
-Role-play and replay of meeting situations are possible future extensions but are not required for the MVP.
+Role-play of meeting situations remains a possible future extension.
+
+### Key Moment Replay
+
+The report step also selects one **key moment**: a single adviser turn, the most
+coachable improvement (or, if none, the adviser's best moment), tied to one coaching
+dimension. On the report screen the adviser can:
+
+1. hear their own recording of that turn, then
+2. hear an AI-written better answer (1–2 sentences) spoken in a temporary clone of
+   their own voice, with a one-line "why this works".
+
+The customer's side of the moment is shown only as a generic paraphrase, and customer
+audio is never replayed. The full recording stays in browser memory
+(`useLiveTranscription`); the browser slices the key-moment turn using the turn
+timestamps and builds an adviser-only voice sample. The sample is uploaded only when
+the adviser asks for the better take. The backend (`app/voice.py`) clones the voice,
+speaks the stored better-answer text, and records the provider voice id on the
+post-meeting session so it is deleted on Finish (`DELETE /post-meeting/{id}/voice`),
+cleanup, or expiry. If cloning is unavailable or the sample is too short, a neutral
+voice is used. On Finish the adviser sees a short receipt of what was deleted and what
+was kept.
 
 ---
 
@@ -874,6 +895,10 @@ OpenRouter / Gemini
 → post-meeting analysis
 → reflection coaching
 → adviser learning extraction
+
+ElevenLabs (post-meeting key moment replay only)
+→ temporary clone of the adviser's own voice
+→ spoken better answer
 
 SQLite
 → persistent adviser learning

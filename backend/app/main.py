@@ -8,6 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.transcription import router as transcription_router
 from app.post_meeting import router as post_meeting_router
 from app.adviser_learning import router as adviser_learning_router
+from app.voice import router as voice_router
 
 load_dotenv()
 
@@ -19,10 +20,12 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["X-Voice-Mode"],
 )
 
 app.include_router(transcription_router)
 app.include_router(post_meeting_router)
+app.include_router(voice_router)
 app.include_router(adviser_learning_router)
 
 deepgram = DeepgramClient(
