@@ -156,9 +156,9 @@ class BehavioralAnalyzer:
             )
             if span_ms > 0:
                 wpm = len(observation.words) * 60_000 / span_ms
-                if wpm >= 175 and span_ms >= 15_000:
+                if wpm >= 175 and span_ms >= 7_000:
                     confidence = Confidence.HIGH
-                elif wpm >= 175 and span_ms >= 10_000:
+                elif wpm >= 175 and span_ms >= 5_000:
                     confidence = Confidence.MEDIUM
                 elif wpm >= 170:
                     confidence = Confidence.LOW
@@ -286,7 +286,7 @@ class RollingContext:
 
 
 class NudgeDecider:
-    def __init__(self, global_cooldown_ms: int = 20_000, repeat_ms: int = 180_000) -> None:
+    def __init__(self, global_cooldown_ms: int = 5_000, repeat_ms: int = 180_000) -> None:
         self.global_cooldown_ms = global_cooldown_ms
         self.repeat_ms = repeat_ms
         self.last_nudge_ms: int | None = None

@@ -64,13 +64,43 @@ def event(
 
 
 class BehavioralAnalyzerTests(unittest.TestCase):
-    def test_sustained_fast_adviser_turn_is_high_confidence(self) -> None:
-        analyzer = BehavioralAnalyzer()
-        events = analyzer.analyze(
-            observation("advisor", 0, 18_000, turn_id="a1", word_count=60)
+    @staticmethod
+    def fast_words(*, span_ms: int, word_count: int) -> tuple[TimedWord, ...]:
+        return tuple(
+            TimedWord(
+                f"word{index}",
+                round(index * (span_ms - 100) / (word_count - 1)),
+                round(index * (span_ms - 100) / (word_count - 1)) + 100,
+            )
+            for index in range(word_count)
+        )
+
+    def test_fast_adviser_turn_just_under_seven_seconds_is_not_high_confidence(self) -> None:
+        words = self.fast_words(span_ms=6_999, word_count=21)
+        events = BehavioralAnalyzer().analyze(
+            observation("advisor", 0, 6_999, turn_id="a1", words=words)
+        )
+        pace = next(item for item in events if item.type == EventType.FAST_PACE)
+        self.assertEqual(pace.confidence, Confidence.MEDIUM)
+
+    def test_fast_adviser_turn_at_seven_seconds_is_high_confidence_and_maps_to_slow_down(self) -> None:
+        words = self.fast_words(span_ms=7_000, word_count=21)
+        events = BehavioralAnalyzer().analyze(
+            observation("advisor", 0, 7_000, turn_id="a1", words=words)
         )
         pace = next(item for item in events if item.type == EventType.FAST_PACE)
         self.assertEqual(pace.confidence, Confidence.HIGH)
+        nudge = NudgeDecider().decide(events, set())
+        self.assertIsNotNone(nudge)
+        self.assertEqual(nudge.nudge_key, NudgeKey.PACE_SLOW_DOWN)
+
+    def test_slower_adviser_turn_at_seven_seconds_is_not_high_confidence(self) -> None:
+        words = self.fast_words(span_ms=7_000, word_count=20)
+        events = BehavioralAnalyzer().analyze(
+            observation("advisor", 0, 7_000, turn_id="a1", words=words)
+        )
+        pace = next(item for item in events if item.type == EventType.FAST_PACE)
+        self.assertEqual(pace.confidence, Confidence.LOW)
 
     def test_pauses_keep_45_words_over_18_seconds_below_fast_pace_threshold(self) -> None:
         words = tuple(

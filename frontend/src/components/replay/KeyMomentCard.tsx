@@ -28,10 +28,10 @@ export function KeyMomentCard({
       className={`mt-4 rounded-[1.5rem] border p-5 sm:p-6 ${strength ? "border-[#cbeadf] bg-[#eefaf6]" : "border-[#f4d9c8] bg-[#fff7f2]"}`}
     >
       <div className="flex flex-wrap items-center gap-3">
-        <p className={`text-xs font-bold tracking-[.12em] ${strength ? "text-[#138467]" : "text-[#b4562f]"}`}>YOUR KEY MOMENT</p>
+        <p className={`text-xs font-semibold tracking-[.12em] ${strength ? "text-[#138467]" : "text-[#b4562f]"}`}>YOUR KEY MOMENT</p>
         <span className="rounded-full bg-white px-3 py-1 text-xs font-semibold text-[#445070]">{areaLabel}</span>
       </div>
-      <h2 id="key-moment-title" className="mt-2 text-2xl font-bold tracking-[-.02em] text-[#27325e]">
+      <h2 id="key-moment-title" className="mt-2 text-2xl font-semibold tracking-[-.02em] text-[#27325e]">
         {strength ? "A moment that worked well" : "A moment worth a second listen"}
       </h2>
       <p className="mt-2 text-base leading-7 text-[#4d5978]">
@@ -74,9 +74,9 @@ export function KeyMomentCard({
 
       {replay.betterStatus === "ready" && (
         <div className="mt-5 rounded-2xl bg-white p-4 sm:p-5">
-          <p className="text-xs font-bold tracking-[.12em] text-[#5146e5]">{strength ? "EVEN STRONGER" : "A BETTER TAKE"}</p>
-          <p className="mt-2 text-xl font-bold leading-8 text-[#27325e]">“{moment.better_answer}”</p>
-          <p className="mt-2 text-sm font-semibold leading-6 text-[#4d5978]">{moment.why}</p>
+          <p className="text-xs font-semibold tracking-[.12em] text-[#5146e5]">{strength ? "EVEN STRONGER" : "A BETTER TAKE"}</p>
+          <p className="mt-2 text-xl font-medium leading-8 text-[#27325e]">“{moment.better_answer}”</p>
+          <p className="mt-2 text-sm font-normal leading-6 text-[#6a7591]">{moment.why}</p>
           {replay.voiceMode === "neutral" && (
             <p className="mt-2 text-sm leading-6 text-[#6a7591]">
               Not enough of your voice was captured, so a neutral voice was used.
