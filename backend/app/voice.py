@@ -15,8 +15,9 @@ router = APIRouter()
 
 ELEVENLABS_BASE_URL = "https://api.elevenlabs.io/v1"
 ELEVENLABS_TTS_MODEL = "eleven_multilingual_v2"
-# ElevenLabs premade voice, used when the adviser's own voice cannot be cloned.
-DEFAULT_NEUTRAL_VOICE_ID = "21m00Tcm4TlvDq8ikWAM"
+# ElevenLabs premade voice ("Sarah"), used when the adviser's own voice cannot be cloned.
+# Premade voices work on every plan; library voices such as "Rachel" are blocked on the free plan.
+DEFAULT_NEUTRAL_VOICE_ID = "EXAVITQu4vr4xnSDxMaL"
 REQUEST_TIMEOUT_SECONDS = 30.0
 
 # The browser sends 16 kHz mono 16-bit WAV, which is 32,000 bytes per second.
