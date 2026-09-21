@@ -395,19 +395,6 @@ export default function Home() {
     void loadHomeLearning();
   };
 
-  const openReflection = () => {
-    replay.stop();
-    reflectionDictation.cancel();
-    setReflectionMessages([initialReflection]);
-    setReflectionDraft("");
-    setReflectionError(null);
-    setReflectionComplete(false);
-    setReflectionPending(false);
-    reflectionPendingRef.current = false;
-    pendingReflectionRef.current = null;
-    setPhase("reflection");
-  };
-
   const sendReflection = async () => {
     const message = reflectionDraft.trim();
     if (!message || !completedSessionId || reflectionComplete || reflectionPendingRef.current) return;
@@ -491,7 +478,7 @@ export default function Home() {
         onPlayBetter={() => completedSessionId && void replay.playBetter(completedSessionId, sessionTurns)}
       />
     ) : null;
-    return <ReportView report={report} keyMomentCard={keyMomentCard} finishing={finishPending} onReflect={openReflection} onFinish={() => void finish()} />;
+    return <ReportView report={report} keyMomentCard={keyMomentCard} finishing={finishPending} onFinish={() => void finish()} />;
   }
   if (phase === "report_error") {
     return <ReportErrorView message={reportError ?? "Feedback could not be prepared."} finishing={finishPending} onRetry={() => completedSessionId && void requestReport(completedSessionId)} onFinish={() => void finish()} />;
@@ -565,8 +552,8 @@ function TransitionScreen() {
   return <main className="grid min-h-screen place-items-center bg-[#f7f9ff] px-6 text-center text-[#17234a]"><section className="max-w-md rounded-[1.7rem] border border-[#d8d5ff] bg-white p-8 shadow-[0_20px_55px_rgba(48,59,113,.09)]"><span className="mx-auto grid h-16 w-16 place-items-center rounded-full bg-[#eceaff] text-2xl text-[#5146e5]">⌁</span><h1 className="mt-6 text-2xl font-bold">Preparing your feedback…</h1><p className="mt-3 leading-7 text-[#687491]">This will only take a moment.</p></section></main>;
 }
 
-function ReportView({ report, keyMomentCard, finishing, onReflect, onFinish }: { report: PostMeetingReport; keyMomentCard: React.ReactNode; finishing: boolean; onReflect: () => void; onFinish: () => void }) {
-  return <main className="min-h-screen bg-[#f7f9ff] px-5 py-6 text-[#17234a] sm:px-8 lg:px-12"><div className="mx-auto max-w-5xl"><header className="flex items-center justify-between"><Brand /><button type="button" disabled={finishing} onClick={onFinish} className="rounded-xl px-3 py-2 text-sm font-semibold text-[#65708d] transition hover:bg-white hover:text-[#34405f] focus:outline-none focus:ring-4 focus:ring-[#e5e3ff] disabled:cursor-not-allowed disabled:opacity-50">← Home</button></header><h1 className="mt-6 text-center text-3xl font-bold tracking-[-.035em] sm:text-4xl">A few things to carry forward.</h1><section className="mt-6 grid gap-4 md:grid-cols-2"><ReportCard title="What went well" items={report.strengths} tone="blue" /><ReportCard title="What to improve" items={report.improvements} tone="lavender" /></section><section className="mt-4 rounded-[1.4rem] border border-[#dfe4f3] bg-white px-5 py-4"><p className="text-sm font-bold text-[#5146e5]">Your focus</p><p className="mt-1.5 text-sm font-semibold leading-6 text-[#445070]">{report.focus_summary}</p></section>{keyMomentCard}<div className="mt-5 flex flex-col justify-center gap-3 sm:flex-row"><ActionButton disabled={finishing} onClick={onReflect}>Reflect <span className="ml-2">→</span></ActionButton><ActionButton variant="secondary" disabled={finishing} onClick={onFinish}>{finishing ? "Finishing…" : "Finish"}</ActionButton></div></div></main>;
+function ReportView({ report, keyMomentCard, finishing, onFinish }: { report: PostMeetingReport; keyMomentCard: React.ReactNode; finishing: boolean; onFinish: () => void }) {
+  return <main className="min-h-screen bg-[#f7f9ff] px-5 py-6 text-[#17234a] sm:px-8 lg:px-12"><div className="mx-auto max-w-5xl"><header className="flex items-center justify-between"><Brand /><button type="button" disabled={finishing} onClick={onFinish} className="rounded-xl px-3 py-2 text-sm font-semibold text-[#65708d] transition hover:bg-white hover:text-[#34405f] focus:outline-none focus:ring-4 focus:ring-[#e5e3ff] disabled:cursor-not-allowed disabled:opacity-50">← Home</button></header><h1 className="mt-6 text-center text-3xl font-bold tracking-[-.035em] sm:text-4xl">A few things to carry forward.</h1><section className="mt-6 grid gap-4 md:grid-cols-2"><ReportCard title="What went well" items={report.strengths} tone="blue" /><ReportCard title="What to improve" items={report.improvements} tone="lavender" /></section><section className="mt-4 rounded-[1.4rem] border border-[#dfe4f3] bg-white px-5 py-4"><p className="text-sm font-bold text-[#5146e5]">Your focus</p><p className="mt-1.5 text-sm font-semibold leading-6 text-[#445070]">{report.focus_summary}</p></section>{keyMomentCard}<div className="mt-5 flex justify-center"><ActionButton variant="secondary" disabled={finishing} onClick={onFinish}>{finishing ? "Finishing…" : "Finish"}</ActionButton></div></div></main>;
 }
 
 function ReportCard({ title, items, tone }: { title: string; items: string[]; tone: "blue" | "lavender" }) {

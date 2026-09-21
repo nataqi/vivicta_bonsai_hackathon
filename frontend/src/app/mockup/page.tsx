@@ -65,7 +65,7 @@ export default function MockupPage() {
 
   if (view === "home") return <Home focus={focus} updated={updated} onToggle={toggleFocus} onStart={startMeeting} />;
   if (view === "meeting") return <Meeting clock={clock} focus={focus} nudge={currentNudge} onBack={leaveMeeting} onEnd={() => setView("report")} />;
-  if (view === "report") return <Report focus={focus} onHome={finish} onReflect={() => setView("reflection")} onFinish={finish} />;
+  if (view === "report") return <Report focus={focus} onHome={finish} onFinish={finish} />;
   return <Reflection chat={chat} draft={draft} setDraft={setDraft} onSend={sendReflection} onBack={() => setView("report")} onFinish={finish} />;
 }
 
@@ -99,7 +99,7 @@ function Meeting({ clock, focus, nudge, onBack, onEnd }: { clock: string; focus:
   );
 }
 
-function Report({ focus, onHome, onReflect, onFinish }: { focus: CoachingFocus[]; onHome: () => void; onReflect: () => void; onFinish: () => void }) {
+function Report({ focus, onHome, onFinish }: { focus: CoachingFocus[]; onHome: () => void; onFinish: () => void }) {
   return (
     <Shell>
       <div className="mx-auto max-w-5xl">
@@ -136,8 +136,7 @@ function Report({ focus, onHome, onReflect, onFinish }: { focus: CoachingFocus[]
           </div>
         </section>
 
-        <div className="mt-5 flex flex-col justify-center gap-3 sm:flex-row">
-          <Button onClick={onReflect}>Reflect on this meeting <span className="ml-2">→</span></Button>
+        <div className="mt-5 flex justify-center">
           <Button variant="secondary" onClick={onFinish}>Finish</Button>
         </div>
       </div>
