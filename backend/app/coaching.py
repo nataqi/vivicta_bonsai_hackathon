@@ -286,7 +286,7 @@ class RollingContext:
 
 
 class NudgeDecider:
-    def __init__(self, global_cooldown_ms: int = 75_000, repeat_ms: int = 180_000) -> None:
+    def __init__(self, global_cooldown_ms: int = 20_000, repeat_ms: int = 180_000) -> None:
         self.global_cooldown_ms = global_cooldown_ms
         self.repeat_ms = repeat_ms
         self.last_nudge_ms: int | None = None
