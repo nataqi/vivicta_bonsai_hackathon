@@ -22,6 +22,14 @@ const COACHING_AREAS: { value: CoachingArea; label: string }[] = [
   { value: "stay_before_solving", label: "Stay with the customer before solving" },
 ];
 
+const AREA_ICONS: { area: CoachingArea; label: string; shortLabel: string; color: string; path: string }[] = [
+  { area: "pace_and_pauses", label: "Pace", shortLabel: "SLOW DOWN", color: "#d97706", path: "M12 2a10 10 0 1 1 0 20A10 10 0 0 1 12 2zm0 5v5l3 3" },
+  { area: "turn_taking_and_interruptions", label: "Turn", shortLabel: "GIVE SPACE", color: "#ea580c", path: "M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2zM9 10h.01M12 10h.01M15 10h.01" },
+  { area: "open_questions", label: "Question", shortLabel: "ASK MORE", color: "#0284c7", path: "M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2zM9.5 9a2.5 2.5 0 0 1 5 0c0 1.5-2.5 2.5-2.5 2.5M12 16h.01" },
+  { area: "acknowledging_emotional_cues", label: "Listen", shortLabel: "ACKNOWLEDGE", color: "#be185d", path: "M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z" },
+  { area: "stay_before_solving", label: "Pause", shortLabel: "STAY HERE", color: "#7c3aed", path: "M6 4h4v16H6zM14 4h4v16h-4z" },
+];
+
 type Phase =
   | "idle"
   | "starting"
@@ -92,6 +100,8 @@ export default function Home() {
     completedSessionId,
     error: transcriptionError,
     currentNudge,
+    talkRatio,
+    lastAdvisorWpm,
     getRecording,
     demoAudio,
     start,
@@ -492,7 +502,7 @@ export default function Home() {
       <div className="mx-auto flex min-h-[calc(100vh-3rem)] max-w-6xl flex-col">
         <header className="flex flex-wrap items-center justify-between gap-4"><Brand />{isMeeting && <div className="flex items-center gap-3"><button type="button" onClick={abandonMeeting} className="rounded-xl px-3 py-2 text-sm font-semibold text-[#65708d] transition hover:bg-white hover:text-[#34405f] focus:outline-none focus:ring-4 focus:ring-[#e5e3ff]">← Home</button><StatusBadge status={status} /></div>}</header>
         {receipt && !isMeeting && <ForgetReceipt data={receipt} onDismiss={() => setReceipt(null)} />}
-        {isMeeting ? <MeetingView focusAreas={focusAreas} turns={turns} currentNudge={currentNudge} status={status} error={demo.error ?? effectiveError} demoPhase={demo.phase} demoName={demo.customerName} onEnd={endMeeting} /> : <HomeView focusAreas={focusAreas} focusHydrated={focusHydrated} error={effectiveError} recentInsight={recentInsight} historyState={historyState} focusSaveError={focusSaveError} learningWarning={learningWarning} onToggle={toggleFocus} onStart={() => beginMeeting()} onStartDemo={() => beginMeeting(true)} />}
+        {isMeeting ? <MeetingView focusAreas={focusAreas} turns={turns} currentNudge={currentNudge} talkRatio={talkRatio} lastAdvisorWpm={lastAdvisorWpm} status={status} error={demo.error ?? effectiveError} demoPhase={demo.phase} demoName={demo.customerName} onEnd={endMeeting} /> : <HomeView focusAreas={focusAreas} focusHydrated={focusHydrated} error={effectiveError} recentInsight={recentInsight} historyState={historyState} focusSaveError={focusSaveError} learningWarning={learningWarning} onToggle={toggleFocus} onStart={() => beginMeeting()} onStartDemo={() => beginMeeting(true)} />}
       </div>
     </main>
   );
@@ -539,8 +549,59 @@ function HomeView({ focusAreas, focusHydrated, error, recentInsight, historyStat
   return <section className="grid flex-1 items-start gap-8 py-10 lg:grid-cols-[1.05fr_.95fr]"><div className="flex flex-col items-start lg:sticky lg:top-8"><h1 className="max-w-xl text-4xl font-bold tracking-[-.04em] sm:text-5xl">Stay present in the conversation.</h1><p className="mt-5 max-w-lg text-lg leading-8 text-[#5d6884]">Choose what you want your coach to prioritize.</p><fieldset className="mt-7 max-w-xl" disabled={!focusHydrated} aria-busy={!focusHydrated}><div className="mt-3 flex flex-wrap gap-2">{COACHING_AREAS.map((area) => { const selected = focusHydrated && focusAreas.includes(area.value); return <button key={area.value} type="button" aria-pressed={selected} onClick={() => onToggle(area.value)} className={`rounded-full border px-3.5 py-2 text-sm font-semibold transition disabled:cursor-wait disabled:opacity-50 ${selected ? "border-[#7770e8] bg-[#eceaff] text-[#332b9d]" : "border-[#dfe4f3] bg-white text-[#65708d] hover:border-[#b9b5f6]"}`}>{area.label}</button>; })}</div></fieldset><div className="mt-8 flex flex-wrap items-center gap-3"><button type="button" onClick={onStart} disabled={!focusHydrated} className="inline-flex min-h-13 items-center justify-center rounded-2xl bg-[#5146e5] px-6 text-base font-semibold text-white shadow-[0_10px_22px_rgba(81,70,229,.24)] transition hover:bg-[#4338ca] focus:outline-none focus:ring-4 focus:ring-[#c9c5ff] disabled:cursor-wait disabled:opacity-50">Start meeting</button><button type="button" onClick={onStartDemo} disabled={!focusHydrated} title="Practise with a scripted, fictional customer who speaks and waits for your answers" className="inline-flex min-h-13 items-center justify-center rounded-2xl border border-[#d9def7] bg-white px-6 text-base font-semibold text-[#27325e] transition hover:bg-[#f4f5ff] focus:outline-none focus:ring-4 focus:ring-[#c9c5ff] disabled:cursor-wait disabled:opacity-50">Demo: Anna, a recent widow</button></div>{(error || focusSaveError) && <div role="alert" className="mt-5 max-w-lg rounded-2xl border border-[#f4c5b6] bg-[#fff3ef] px-4 py-3 text-sm font-semibold leading-6 text-[#8b452f]">{error ?? focusSaveError}</div>}{learningWarning && <p role="status" className="mt-4 max-w-lg text-sm font-medium leading-6 text-[#7b5a36]">{learningWarning}</p>}<p className="mt-7 text-sm leading-6 text-[#707c98]">Conversation audio, transcript, and customer details are temporary.</p></div><section className="min-h-36 rounded-[1.5rem] border border-[#cedcff] bg-[#eaf1ff] p-5 shadow-[0_18px_45px_rgba(81,70,229,.08)]"><p className="text-sm font-bold text-[#344a80]">Recent coaching insight</p><p className="mt-2 min-h-14 text-base leading-7 text-[#435a83]">{insight}</p></section></section>;
 }
 
-function MeetingView({ focusAreas, turns, currentNudge, status, error, demoPhase, demoName, onEnd }: { focusAreas: CoachingArea[]; turns: ReturnType<typeof useLiveTranscription>["turns"]; currentNudge: ReturnType<typeof useLiveTranscription>["currentNudge"]; status: TranscriptionStatus; error: string | null; demoPhase: DemoPhase; demoName: string; onEnd: () => void }) {
-  return <section className="grid flex-1 items-start gap-8 py-10 lg:grid-cols-[.9fr_1.1fr]"><div className="flex flex-col items-start lg:sticky lg:top-8"><h1 className="max-w-xl text-4xl font-bold tracking-[-.04em] sm:text-5xl">Stay present in the conversation.</h1><div className="mt-7 max-w-xl"><p className="text-sm font-semibold text-[#687491]">Today’s focus</p><div className="mt-2 flex flex-wrap gap-2">{focusAreas.map((area) => <span key={area} className="rounded-full bg-[#eceaff] px-3 py-1.5 text-xs font-semibold text-[#5146a5]">{labelForArea(area)}</span>)}</div></div>{demoPhase !== "off" && <DemoChip phase={demoPhase} name={demoName} />}<button type="button" onClick={onEnd} disabled={status === "stopping"} className="mt-8 inline-flex min-h-13 items-center justify-center rounded-2xl bg-[#b85c6b] px-6 text-base font-semibold text-white shadow-[0_10px_22px_rgba(126,56,72,.18)] transition hover:bg-[#a94d5e] focus:outline-none focus:ring-4 focus:ring-[#efcbd2] disabled:cursor-wait disabled:opacity-65">{status === "stopping" ? "Finishing…" : "End meeting"}</button>{error && <div role="alert" className="mt-5 max-w-lg rounded-2xl border border-[#f4c5b6] bg-[#fff3ef] px-4 py-3 text-sm font-semibold leading-6 text-[#8b452f]">{error}</div>}</div><div className="space-y-5"><section className="min-h-44 rounded-[1.7rem] border border-[#d8d5ff] bg-gradient-to-br from-[#f0efff] via-[#f5f4ff] to-[#edf5ff] p-6 shadow-[0_18px_45px_rgba(81,70,229,.10)]" aria-live="polite"><p className="text-xs font-bold tracking-[.12em] text-[#5146e5]">LIVE COACH</p>{currentNudge ? <div className="mt-5 border-l-4 border-[#7770e8] pl-5"><p className="text-2xl font-bold leading-9 text-[#17234a]">{currentNudge.text}</p><p className="mt-2 text-sm font-semibold text-[#665fb8]">A small moment to try now</p></div> : <div className="mt-5"><p className="text-xl font-bold text-[#28345b]">Listening quietly…</p><p className="mt-2 leading-7 text-[#6b7591]">The coach stays silent unless there is a clear, useful prompt.</p></div>}</section><details open className="overflow-hidden rounded-[1.7rem] border border-[#dfe4f3] bg-white shadow-[0_16px_40px_rgba(48,59,113,.07)]"><summary className="cursor-pointer px-5 py-4 text-sm font-bold text-[#5146e5] sm:px-6">Conversation transcript · {turns.length} finalized turns</summary><div className="max-h-[24rem] overflow-y-auto border-t border-[#e7eaf4] p-5 sm:p-6" aria-live="polite">{turns.length === 0 ? <p className="py-10 text-center font-medium text-[#7a86a1]">Finalized conversation turns will appear here.</p> : <ol className="space-y-4">{turns.map((turn) => <li key={turn.id} className={`rounded-2xl border p-4 ${turn.speaker === "advisor" ? "border-[#d4d1ff] bg-[#f3f1ff]" : "border-[#cbeadf] bg-[#eefaf6]"}`}><div className="flex items-center justify-between gap-4"><p className={`text-xs font-bold uppercase tracking-[.1em] ${turn.speaker === "advisor" ? "text-[#5146e5]" : "text-[#138467]"}`}>{turn.speaker}</p><p className="text-xs font-semibold text-[#8a94ad]">{formatTimestamp(turn.startTimeMs)}</p></div><p className="mt-2 text-base font-medium leading-7 text-[#2f3a5d]">{turn.text}</p></li>)}</ol>}</div></details></div></section>;
+function MeetingView({ focusAreas, turns, currentNudge, talkRatio, lastAdvisorWpm, status, error, demoPhase, demoName, onEnd }: { focusAreas: CoachingArea[]; turns: ReturnType<typeof useLiveTranscription>["turns"]; currentNudge: ReturnType<typeof useLiveTranscription>["currentNudge"]; talkRatio: ReturnType<typeof useLiveTranscription>["talkRatio"]; lastAdvisorWpm: ReturnType<typeof useLiveTranscription>["lastAdvisorWpm"]; status: TranscriptionStatus; error: string | null; demoPhase: DemoPhase; demoName: string; onEnd: () => void }) {
+  const activeAreaIcon = currentNudge ? AREA_ICONS.find((a) => a.area === currentNudge.area) ?? null : null;
+  return <section className="grid flex-1 items-start gap-8 py-10 lg:grid-cols-[.9fr_1.1fr]"><div className="flex flex-col items-start lg:sticky lg:top-8"><h1 className="max-w-xl text-4xl font-bold tracking-[-.04em] sm:text-5xl">Stay present in the conversation.</h1><div className="mt-7 max-w-xl"><p className="text-sm font-semibold text-[#687491]">Today’s focus</p><div className="mt-2 flex flex-wrap gap-2">{focusAreas.map((area) => <span key={area} className="rounded-full bg-[#eceaff] px-3 py-1.5 text-xs font-semibold text-[#5146a5]">{labelForArea(area)}</span>)}</div></div>{demoPhase !== "off" && <DemoChip phase={demoPhase} name={demoName} />}<button type="button" onClick={onEnd} disabled={status === "stopping"} className="mt-8 inline-flex min-h-13 items-center justify-center rounded-2xl bg-[#b85c6b] px-6 text-base font-semibold text-white shadow-[0_10px_22px_rgba(126,56,72,.18)] transition hover:bg-[#a94d5e] focus:outline-none focus:ring-4 focus:ring-[#efcbd2] disabled:cursor-wait disabled:opacity-65">{status === "stopping" ? "Finishing…" : "End meeting"}</button>{error && <div role="alert" className="mt-5 max-w-lg rounded-2xl border border-[#f4c5b6] bg-[#fff3ef] px-4 py-3 text-sm font-semibold leading-6 text-[#8b452f]">{error}</div>}</div><div className="space-y-5"><section className="rounded-[1.7rem] border border-[#d8d5ff] bg-gradient-to-br from-[#f0efff] via-[#f5f4ff] to-[#edf5ff] p-6 shadow-[0_18px_45px_rgba(81,70,229,.10)]" aria-live="polite">
+            <p className="text-xs font-bold tracking-[.12em] text-[#5146e5]">LIVE COACH</p>
+            {currentNudge && activeAreaIcon ? (
+              <div
+                className="mt-4 flex flex-col items-center gap-4 rounded-2xl p-6 text-center"
+                style={{ backgroundColor: `${activeAreaIcon.color}0f`, border: `2.5px solid ${activeAreaIcon.color}` }}
+              >
+                <div className="relative grid h-24 w-24 place-items-center rounded-full" style={{ backgroundColor: `${activeAreaIcon.color}18` }}>
+                  <span className="absolute inset-0 animate-ping rounded-full" style={{ backgroundColor: activeAreaIcon.color, opacity: 0.1 }} />
+                  <svg viewBox="0 0 24 24" width="52" height="52" fill="none" stroke={activeAreaIcon.color} strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                    <path d={activeAreaIcon.path} />
+                  </svg>
+                </div>
+                <div>
+                  <p className="text-3xl font-black tracking-[.06em]" style={{ color: activeAreaIcon.color }}>{activeAreaIcon.shortLabel}</p>
+                  <p className="mt-2 text-sm font-medium text-[#536080]">{currentNudge.text}</p>
+                </div>
+              </div>
+            ) : (
+              <div className="mt-5">
+                <p className="text-xl font-bold text-[#28345b]">Listening quietly…</p>
+                <p className="mt-2 leading-7 text-[#6b7591]">The coach stays silent unless there is a clear, useful prompt.</p>
+              </div>
+            )}
+            <div className="mt-5 grid grid-cols-2 gap-3">
+              <div className="rounded-2xl border border-[#e0deff] bg-white/70 p-3">
+                <p className="text-[10px] font-bold tracking-wide text-[#687491]">TALK TIME</p>
+                {talkRatio ? (
+                  <div className="mt-2">
+                    <div className="flex h-3 overflow-hidden rounded-full">
+                      <div className="bg-[#5146e5] transition-all duration-500" style={{ width: `${talkRatio.advisorPct * 100}%` }} />
+                      <div className="flex-1 bg-[#16a47e]" />
+                    </div>
+                    <div className="mt-1.5 flex justify-between text-[10px] font-semibold">
+                      <span className="text-[#5146e5]">You</span>
+                      <span className="text-[#16a47e]">Customer</span>
+                    </div>
+                  </div>
+                ) : <p className="mt-1 text-xs text-[#a6afc3]">Waiting…</p>}
+              </div>
+              <div className="rounded-2xl border border-[#e0deff] bg-white/70 p-3">
+                <p className="text-[10px] font-bold tracking-wide text-[#687491]">PACE</p>
+                {lastAdvisorWpm !== null ? (
+                  <div className="mt-2 flex items-center gap-2">
+                    <div className="h-4 w-4 flex-shrink-0 rounded-full" style={{ backgroundColor: lastAdvisorWpm > 175 ? "#e879a0" : lastAdvisorWpm > 140 ? "#f59e0b" : "#16a47e" }} />
+                    <span className="text-sm font-bold text-[#27325e]">{lastAdvisorWpm} wpm</span>
+                  </div>
+                ) : <p className="mt-1 text-xs text-[#a6afc3]">Waiting…</p>}
+              </div>
+            </div>
+          </section><details open className="overflow-hidden rounded-[1.7rem] border border-[#dfe4f3] bg-white shadow-[0_16px_40px_rgba(48,59,113,.07)]"><summary className="cursor-pointer px-5 py-4 text-sm font-bold text-[#5146e5] sm:px-6">Conversation transcript · {turns.length} finalized turns</summary><div className="max-h-[24rem] overflow-y-auto border-t border-[#e7eaf4] p-5 sm:p-6" aria-live="polite">{turns.length === 0 ? <p className="py-10 text-center font-medium text-[#7a86a1]">Finalized conversation turns will appear here.</p> : <ol className="space-y-4">{turns.map((turn) => <li key={turn.id} className={`rounded-2xl border p-4 ${turn.speaker === "advisor" ? "border-[#d4d1ff] bg-[#f3f1ff]" : "border-[#cbeadf] bg-[#eefaf6]"}`}><div className="flex items-center justify-between gap-4"><p className={`text-xs font-bold uppercase tracking-[.1em] ${turn.speaker === "advisor" ? "text-[#5146e5]" : "text-[#138467]"}`}>{turn.speaker}</p><p className="text-xs font-semibold text-[#8a94ad]">{formatTimestamp(turn.startTimeMs)}</p></div><p className="mt-2 text-base font-medium leading-7 text-[#2f3a5d]">{turn.text}</p></li>)}</ol>}</div></details></div></section>;
 }
 
 function DemoChip({ phase, name }: { phase: Exclude<DemoPhase, "off">; name: string }) {

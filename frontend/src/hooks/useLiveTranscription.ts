@@ -510,6 +510,21 @@ export function useLiveTranscription() {
     [],
   );
 
+  const talkRatio = useMemo(() => {
+    if (turns.length === 0) return null;
+    const advisorMs = turns.filter((t) => t.speaker === "advisor").reduce((s, t) => s + t.durationMs, 0);
+    const customerMs = turns.filter((t) => t.speaker === "customer").reduce((s, t) => s + t.durationMs, 0);
+    const total = advisorMs + customerMs;
+    return total > 0 ? { advisorPct: advisorMs / total, customerPct: customerMs / total } : null;
+  }, [turns]);
+
+  const lastAdvisorWpm = useMemo(() => {
+    const last = [...turns].reverse().find((t) => t.speaker === "advisor");
+    if (!last || last.durationMs < 2000) return null;
+    const words = last.text.trim().split(/\s+/).length;
+    return Math.round(words / (last.durationMs / 60000));
+  }, [turns]);
+
   return {
     status,
     turns,
@@ -517,6 +532,8 @@ export function useLiveTranscription() {
     completedSessionId,
     error,
     currentNudge,
+    talkRatio,
+    lastAdvisorWpm,
     getRecording,
     demoAudio,
     start,
