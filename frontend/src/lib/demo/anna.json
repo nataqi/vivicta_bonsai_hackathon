@@ -1,0 +1,36 @@
+{
+  "name": "Anna",
+  "voiceId": "pFZP5JQG7iQjIQuC4Bku",
+  "lines": [
+    {
+      "id": "01",
+      "file": "/demo/anna/01.mp3",
+      "text": "Thank you for seeing me. I'm sorry, I don't really know where to start. My husband, Paul, died six weeks ago."
+    },
+    {
+      "id": "02",
+      "file": "/demo/anna/02.mp3",
+      "text": "He always dealt with the money. The mortgage, the bills... and now the letters keep coming and I can't even open them."
+    },
+    {
+      "id": "03",
+      "file": "/demo/anna/03.mp3",
+      "text": "I keep thinking I'll have to sell the house. We bought it together thirty years ago. The children grew up there."
+    },
+    {
+      "id": "04",
+      "file": "/demo/anna/04.mp3",
+      "text": "I don't even know what I'm allowed to ask. Are we behind? Is it too late to do anything? I honestly don't know."
+    },
+    {
+      "id": "05",
+      "file": "/demo/anna/05.mp3",
+      "text": "I'm sorry. I didn't want to cry in front of you."
+    },
+    {
+      "id": "06",
+      "file": "/demo/anna/06.mp3",
+      "text": "Thank you for listening. I think I just needed someone to say it's alright not to have all the answers yet."
+    }
+  ]
+}

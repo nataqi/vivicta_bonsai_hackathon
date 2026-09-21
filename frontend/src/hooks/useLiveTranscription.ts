@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 const AUDIO_MIME_TYPE = "audio/webm;codecs=opus";
 const TRANSCRIPTION_URL = "ws://localhost:8001/ws/transcription";
@@ -29,6 +29,18 @@ export type LiveNudge = {
   text: string;
   timestampMs: number;
 };
+
+/**
+ * Demo-only audio hooks. In demo mode the mic and the scripted customer are mixed into the
+ * recorded stream, so transcription hears the customer cleanly on speakers or headphones.
+ */
+export type DemoAudio = {
+  decode: (url: string) => Promise<AudioBuffer>;
+  play: (buffer: AudioBuffer) => Promise<void>;
+  getMicLevel: () => number;
+};
+
+export type StartOptions = { demo?: boolean };
 
 export type TranscriptionStatus =
   | "idle"
@@ -93,6 +105,10 @@ export function useLiveTranscription() {
   const acceptSessionTurnsRef = useRef(false);
   const nudgeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const finalizationTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const demoDestinationRef = useRef<MediaStreamAudioDestinationNode | null>(null);
+  const analyserRef = useRef<AnalyserNode | null>(null);
+  const levelBufferRef = useRef<Float32Array<ArrayBuffer> | null>(null);
 
   const clearLiveContent = useCallback(() => {
     setTurns([]);
@@ -101,6 +117,14 @@ export function useLiveTranscription() {
     nudgeTimerRef.current = null;
     if (finalizationTimerRef.current) clearTimeout(finalizationTimerRef.current);
     finalizationTimerRef.current = null;
+  }, []);
+
+  const closeAudioGraph = useCallback(() => {
+    const context = audioContextRef.current;
+    audioContextRef.current = null;
+    demoDestinationRef.current = null;
+    analyserRef.current = null;
+    if (context && context.state !== "closed") void context.close();
   }, []);
 
   const disposeSession = useCallback((closeSocket = true) => {
@@ -129,12 +153,15 @@ export function useLiveTranscription() {
     sendChainRef.current = Promise.resolve();
     if (nudgeTimerRef.current) clearTimeout(nudgeTimerRef.current);
     nudgeTimerRef.current = null;
-  }, []);
+    closeAudioGraph();
+  }, [closeAudioGraph]);
 
-  const start = useCallback(async (focusAreas: CoachingArea[]) => {
+  const start = useCallback(async (focusAreas: CoachingArea[], options?: StartOptions) => {
     expectedCloseRef.current = true;
     disposeSession();
     expectedCloseRef.current = false;
+    // Created before any await so it stays inside the button click's user activation.
+    if (options?.demo) audioContextRef.current = new AudioContext();
     stopRequestedRef.current = false;
     acceptVisibleLiveContentRef.current = true;
     acceptSessionTurnsRef.current = true;
@@ -148,12 +175,14 @@ export function useLiveTranscription() {
     setStatus("requesting");
 
     if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === "undefined") {
+      closeAudioGraph();
       setError("This browser does not support microphone recording.");
       setStatus("error");
       return;
     }
 
     if (!MediaRecorder.isTypeSupported(AUDIO_MIME_TYPE)) {
+      closeAudioGraph();
       setError("Use a current Chrome or Edge browser for live transcription.");
       setStatus("error");
       return;
@@ -171,6 +200,7 @@ export function useLiveTranscription() {
       });
     } catch (microphoneError) {
       if (generation !== generationRef.current || !mountedRef.current) return;
+      closeAudioGraph();
       const permissionDenied =
         microphoneError instanceof DOMException &&
         (microphoneError.name === "NotAllowedError" ||
@@ -190,6 +220,22 @@ export function useLiveTranscription() {
     }
 
     streamRef.current = stream;
+
+    // Demo only: mix the mic with the scripted customer, and record that mix.
+    let recordingStream = stream;
+    const demoContext = audioContextRef.current;
+    if (demoContext) {
+      const micSource = demoContext.createMediaStreamSource(stream);
+      const destination = demoContext.createMediaStreamDestination();
+      const analyser = demoContext.createAnalyser();
+      analyser.fftSize = 1024;
+      micSource.connect(destination);
+      micSource.connect(analyser);
+      demoDestinationRef.current = destination;
+      analyserRef.current = analyser;
+      recordingStream = destination.stream;
+      void demoContext.resume();
+    }
     setStatus("connecting");
 
     const websocket = new WebSocket(TRANSCRIPTION_URL);
@@ -229,7 +275,7 @@ export function useLiveTranscription() {
 
         websocket.send(JSON.stringify({ type: "session.configure", focusAreas }));
 
-        const recorder = new MediaRecorder(stream, { mimeType: AUDIO_MIME_TYPE });
+        const recorder = new MediaRecorder(recordingStream, { mimeType: AUDIO_MIME_TYPE });
         recorderRef.current = recorder;
         recorder.ondataavailable = (audioEvent) => {
           if (!audioEvent.data.size) return;
@@ -315,7 +361,7 @@ export function useLiveTranscription() {
         fail("The live transcription connection closed. Please try again.");
       }
     };
-  }, [clearLiveContent, disposeSession]);
+  }, [clearLiveContent, closeAudioGraph, disposeSession]);
 
   const clearCompletedSession = useCallback(() => {
     generationRef.current += 1;
@@ -425,6 +471,45 @@ export function useLiveTranscription() {
     return chunks.length ? new Blob(chunks, { type: AUDIO_MIME_TYPE }) : null;
   }, []);
 
+  const demoAudio = useMemo<DemoAudio>(
+    () => ({
+      decode: async (url) => {
+        const context = audioContextRef.current;
+        if (!context) throw new Error("Demo audio is not ready.");
+        const response = await fetch(url);
+        if (!response.ok) throw new Error("A demo audio clip could not be loaded.");
+        return context.decodeAudioData(await response.arrayBuffer());
+      },
+      play: async (buffer) => {
+        const context = audioContextRef.current;
+        const destination = demoDestinationRef.current;
+        if (!context || !destination) throw new Error("Demo audio is not ready.");
+        await context.resume();
+        await new Promise<void>((resolve) => {
+          const source = context.createBufferSource();
+          source.buffer = buffer;
+          source.connect(destination); // the recording Deepgram transcribes
+          source.connect(context.destination); // the room
+          source.onended = () => resolve();
+          source.start();
+        });
+      },
+      getMicLevel: () => {
+        const analyser = analyserRef.current;
+        if (!analyser) return 0;
+        if (!levelBufferRef.current || levelBufferRef.current.length !== analyser.fftSize) {
+          levelBufferRef.current = new Float32Array(analyser.fftSize);
+        }
+        const samples = levelBufferRef.current;
+        analyser.getFloatTimeDomainData(samples);
+        let sum = 0;
+        for (const sample of samples) sum += sample * sample;
+        return Math.sqrt(sum / samples.length);
+      },
+    }),
+    [],
+  );
+
   return {
     status,
     turns,
@@ -433,6 +518,7 @@ export function useLiveTranscription() {
     error,
     currentNudge,
     getRecording,
+    demoAudio,
     start,
     stop,
     clearCompletedSession,
