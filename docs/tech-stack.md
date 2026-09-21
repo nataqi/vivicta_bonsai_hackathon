@@ -185,6 +185,32 @@ Live nudge text should primarily come from the predefined application nudge libr
 
 ---
 
+## Voice Replay
+
+### ElevenLabs
+
+Used only in the post-meeting "key moment" replay. The report picks one adviser
+turn; the adviser hears their own recorded turn, then an AI-written better answer
+spoken in a temporary instant clone of their own voice. The required credential is
+`ELEVENLABS_API_KEY`; the backend calls the ElevenLabs REST API with `httpx`, so
+the key never reaches the browser. Without a key, or if cloning fails or too
+little adviser speech was captured, the better take falls back to a neutral
+premade voice (`ELEVENLABS_NEUTRAL_VOICE_ID` can override it).
+
+Privacy rules:
+
+- The full meeting recording stays in the browser only; the backend never stores audio.
+- Only adviser speech is used for the voice sample. Customer speech is never
+  replayed or sent to ElevenLabs.
+- ElevenLabs is an additional processor for the adviser's voice sample and the
+  better-answer text. That text is a generic paraphrase-based suggestion, not a
+  customer quote.
+- The cloned voice is deleted at the provider on Finish, on cleanup, or when the
+  post-meeting session is dropped. The Finish receipt only claims deletion the
+  provider confirmed.
+
+---
+
 ## Database
 
 ### SQLite
@@ -315,6 +341,9 @@ Speech-to-Text
 
 AI
 - OpenRouter / Google Gemini
+
+Voice Replay (post-meeting only)
+- ElevenLabs instant voice clone and text-to-speech
 
 Persistent Storage
 - Python `sqlite3`
