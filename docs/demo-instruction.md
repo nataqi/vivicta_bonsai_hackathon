@@ -69,3 +69,38 @@ Explicitly identify or enrol the adviser rather than relying on the first-speake
 
 **Status:**  
 Known and partially mitigated for the prototype; still an open production risk.
+
+## Transcript
+ADVISER — fast, around 185–195 WPM
+
+Hello. Before we start, I want to quickly outline what we can cover today. We can look at what has changed, go through your questions, review the information you have, and decide what would be most useful to focus on first.
+
+
+CUSTOMER
+
+Okay. I brought my latest statement and some notes with me, and I mainly want to understand what we should look at first.
+
+
+ADVISER — normal pace
+
+Great. We can go through those together one step at a time.
+
+
+CUSTOMER
+
+I’m scared I could lose my home. I haven’t been sleeping.
+
+
+ADVISER — deliberately misses the emotion
+
+What is the balance on your mortgage?
+
+
+CUSTOMER
+
+I have the numbers here, but honestly it’s the uncertainty that is worrying me most.
+
+
+ADVISER — responds well after the nudge
+
+That sounds really difficult. What part of the uncertainty feels hardest for you right now?
