@@ -38,6 +38,7 @@ class NudgeKey(StrEnum):
     PACE_SLOW_DOWN = "PACE_SLOW_DOWN"
     ALLOW_PAUSE = "ALLOW_PAUSE"
     DO_NOT_INTERRUPT = "DO_NOT_INTERRUPT"
+    INVITE_RESPONSE = "INVITE_RESPONSE"
     ASK_OPEN_QUESTION = "ASK_OPEN_QUESTION"
     ACKNOWLEDGE_EMOTION = "ACKNOWLEDGE_EMOTION"
     STAY_BEFORE_SOLVING = "STAY_BEFORE_SOLVING"
@@ -47,6 +48,7 @@ NUDGE_TEXT = {
     NudgeKey.PACE_SLOW_DOWN: "Slow down a little.",
     NudgeKey.ALLOW_PAUSE: "Give the customer a moment.",
     NudgeKey.DO_NOT_INTERRUPT: "Let them finish.",
+    NudgeKey.INVITE_RESPONSE: "Pause and check in with them.",
     NudgeKey.ASK_OPEN_QUESTION: "Try an open question.",
     NudgeKey.ACKNOWLEDGE_EMOTION: "Acknowledge what they just shared.",
     NudgeKey.STAY_BEFORE_SOLVING: "Stay with the moment before solving.",
@@ -55,7 +57,9 @@ NUDGE_TEXT = {
 EVENT_NUDGES = {
     EventType.FAST_PACE: NudgeKey.PACE_SLOW_DOWN,
     EventType.SHORT_RESPONSE_GAP: NudgeKey.ALLOW_PAUSE,
+    EventType.LONG_MONOLOGUE: NudgeKey.INVITE_RESPONSE,
     EventType.INTERRUPTION_PATTERN: NudgeKey.DO_NOT_INTERRUPT,
+    EventType.TALK_TIME_IMBALANCE: NudgeKey.INVITE_RESPONSE,
     EventType.CLOSED_QUESTION_PATTERN: NudgeKey.ASK_OPEN_QUESTION,
     EventType.MISSED_EMOTIONAL_CUE: NudgeKey.ACKNOWLEDGE_EMOTION,
     EventType.PREMATURE_PROBLEM_SOLVING: NudgeKey.STAY_BEFORE_SOLVING,
@@ -194,12 +198,19 @@ class BehavioralAnalyzer:
         if self._talk_time and end_ms - self._talk_time[0][0] >= 60_000:
             advisor_ms = sum(item[3] for item in self._talk_time if item[2] == "advisor")
             total_ms = sum(item[3] for item in self._talk_time)
-            if total_ms and advisor_ms / total_ms > 0.70:
+            share = advisor_ms / total_ms if total_ms else 0
+            if share > 0.85:
+                confidence = Confidence.HIGH
+            elif share > 0.70:
+                confidence = Confidence.MEDIUM
+            else:
+                confidence = None
+            if confidence:
                 events.append(
                     DetectedEvent(
                         CoachingArea.TURN_TAKING_AND_INTERRUPTS,
                         EventType.TALK_TIME_IMBALANCE,
-                        Confidence.MEDIUM,
+                        confidence,
                         end_ms,
                         "Adviser talk time exceeded 70% of the recent window.",
                         (turn_id,),

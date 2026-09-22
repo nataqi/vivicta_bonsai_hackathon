@@ -165,13 +165,32 @@ class BehavioralAnalyzerTests(unittest.TestCase):
         self.assertEqual(next(e for e in medium if e.type == EventType.LONG_MONOLOGUE).confidence, Confidence.MEDIUM)
         self.assertEqual(next(e for e in high if e.type == EventType.LONG_MONOLOGUE).confidence, Confidence.HIGH)
 
+    def test_long_monologue_high_confidence_maps_to_invite_response(self) -> None:
+        analyzer = BehavioralAnalyzer()
+        events = analyzer.analyze(observation("advisor", 0, 45_000, turn_id="a1"))
+        monologue = next(item for item in events if item.type == EventType.LONG_MONOLOGUE)
+        self.assertEqual(monologue.confidence, Confidence.HIGH)
+        nudge = NudgeDecider().decide(events, set())
+        self.assertIsNotNone(nudge)
+        self.assertEqual(nudge.nudge_key, NudgeKey.INVITE_RESPONSE)
+
     def test_talk_time_imbalance_is_supporting_evidence(self) -> None:
         analyzer = BehavioralAnalyzer()
-        analyzer.analyze(observation("advisor", 0, 50_000, turn_id="a1", word_count=100))
-        events = analyzer.analyze(observation("customer", 60_000, 65_000, turn_id="c1", word_count=10))
+        analyzer.analyze(observation("advisor", 0, 40_000, turn_id="a1", word_count=80))
+        events = analyzer.analyze(observation("customer", 45_000, 60_000, turn_id="c1", word_count=30))
         balance = next(item for item in events if item.type == EventType.TALK_TIME_IMBALANCE)
         self.assertEqual(balance.confidence, Confidence.MEDIUM)
         self.assertIsNone(NudgeDecider().decide(events, set()))
+
+    def test_talk_time_imbalance_high_confidence_maps_to_invite_response(self) -> None:
+        analyzer = BehavioralAnalyzer()
+        analyzer.analyze(observation("advisor", 0, 55_000, turn_id="a1", word_count=110))
+        events = analyzer.analyze(observation("customer", 58_000, 60_000, turn_id="c1", word_count=4))
+        balance = next(item for item in events if item.type == EventType.TALK_TIME_IMBALANCE)
+        self.assertEqual(balance.confidence, Confidence.HIGH)
+        nudge = NudgeDecider().decide(events, set())
+        self.assertIsNotNone(nudge)
+        self.assertEqual(nudge.nudge_key, NudgeKey.INVITE_RESPONSE)
 
 
 class NudgeDecisionTests(unittest.TestCase):
