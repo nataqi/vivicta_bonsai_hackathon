@@ -23,22 +23,24 @@ from app.openrouter import (
 
 MODEL = OPENROUTER_MODEL
 
-INSTRUCTIONS = """You classify live conversation coaching events for a financial adviser.
-Coach only the adviser. Return only schema-valid structured output. Never generate coaching prose.
-The provided speaker field is authoritative. Never infer or change a speaker role from utterance text.
-Use high confidence only for explicit, unambiguous evidence; medium for plausible but ambiguous
-evidence; low when substantial inference is required. For CLOSED_QUESTION_PATTERN, high confidence
-requires a clear cluster of consecutive narrow or closed adviser questions where open exploration
-would have been appropriate; one necessary factual or compliance question is not automatically a
-coaching issue. Detect events independently of selectedFocus, which affects downstream priority
-only. Return every independently supported event; do not omit one because another is also present.
-CUSTOMER_EMOTIONAL_CUE is context only and must have no nudge key.
-After a customer cue, inspect the adviser's next response. If it acknowledges or explores the cue,
-emit no actionable event. Only if it clearly bypasses or ignores the cue may you emit
-MISSED_EMOTIONAL_CUE with ACKNOWLEDGE_EMOTION. Emit PREMATURE_PROBLEM_SOLVING only when the adviser
-moves directly into advice, numbers, or solutions before acknowledging or exploring a significant
-disclosure. Allowed event types and nudge keys are enforced by the schema. Return no event when
-evidence is insufficient. Evidence must be a brief reason without copying customer quotations."""
+# Kept as tight as the rules allow: this is re-sent and re-processed on every live call, and
+# every sentence here maps to a rule tests rely on (role authority, per-type confidence rubric,
+# the emotional-cue/premature-solving pair, schema enforcement, no quotations). Trim wording,
+# not rules.
+INSTRUCTIONS = """Classify live coaching events for a financial adviser. Coach only the adviser:
+return schema-valid structured output only, never prose. The speaker field is authoritative; never
+infer or change it from utterance text. Confidence: high only for explicit, unambiguous evidence;
+medium for plausible but ambiguous evidence; low when substantial inference is required.
+CLOSED_QUESTION_PATTERN needs high confidence only for a clear cluster of consecutive narrow/closed
+adviser questions where open exploration was appropriate; one necessary factual or compliance
+question is not a coaching issue. Detect events independently of selectedFocus (it only affects
+downstream priority); return every independently supported event, even alongside others.
+CUSTOMER_EMOTIONAL_CUE is context only, with no nudge key. After a customer cue, check the adviser's
+next response: if it acknowledges or explores the cue, emit nothing; only if it clearly bypasses the
+cue, emit MISSED_EMOTIONAL_CUE with ACKNOWLEDGE_EMOTION. Emit PREMATURE_PROBLEM_SOLVING only when the
+adviser moves directly into advice, numbers, or solutions before acknowledging or exploring a
+significant disclosure. Event types and nudge keys are schema-enforced. Return no event when
+evidence is insufficient. Evidence must be a brief reason, never a customer quotation."""
 
 
 class SemanticCandidate(BaseModel):
@@ -116,7 +118,10 @@ class OpenRouterSemanticAnalyzer:
                 },
             ],
             response_format=structured_response_format(SemanticAnalysisResult),
-            max_tokens=500,
+            # Right-sized for the schema's realistic shape (300-char summary + up to 4 events),
+            # not the pathological worst case of 4 maxed-out events, which the model's own
+            # "return every independently supported event" instruction makes rare in practice.
+            max_tokens=400,
             extra_body=OPENROUTER_STRUCTURED_PROVIDER,
         )
         content = response.choices[0].message.content

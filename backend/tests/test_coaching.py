@@ -352,6 +352,36 @@ class CoachingSessionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(list(session.context.events), [])
         await session.close()
 
+    async def test_trivial_advisor_backchannel_skips_semantic_scheduling(self) -> None:
+        analyzer = FakeAnalyzer([("unused", [])])
+        session = CoachingSession(analyzer)
+        session.observe(observation("advisor", 0, 200, turn_id="a1", word_count=1))
+        session.schedule_semantic(lambda nudge: self._capture([], nudge))
+        await asyncio.sleep(0.01)
+
+        self.assertEqual(analyzer.calls, [])
+        await session.close()
+
+    async def test_short_customer_turn_still_schedules_semantic(self) -> None:
+        analyzer = FakeAnalyzer([("unused", [])])
+        session = CoachingSession(analyzer)
+        session.observe(observation("customer", 0, 200, turn_id="c1", word_count=1))
+        session.schedule_semantic(lambda nudge: self._capture([], nudge))
+        await asyncio.sleep(0.01)
+
+        self.assertEqual(len(analyzer.calls), 1)
+        await session.close()
+
+    async def test_non_trivial_advisor_turn_still_schedules_semantic(self) -> None:
+        analyzer = FakeAnalyzer([("unused", [])])
+        session = CoachingSession(analyzer)
+        session.observe(observation("advisor", 0, 1_000, turn_id="a1", word_count=3))
+        session.schedule_semantic(lambda nudge: self._capture([], nudge))
+        await asyncio.sleep(0.01)
+
+        self.assertEqual(len(analyzer.calls), 1)
+        await session.close()
+
     @staticmethod
     async def _capture(target: list, nudge: object) -> None:
         target.append(nudge)

@@ -62,6 +62,13 @@ EVENT_NUDGES = {
 
 RELEVANCE_WINDOW_MS = 120_000
 
+# Adviser-only, deliberately tiny: a 1-2 word adviser turn ("okay", "mm-hmm", "right") cannot be a
+# question cluster, advice/solution, or a bypassed emotional cue, so skipping the LLM call for it
+# costs nothing. Customer turns are never skipped at any length, since a short customer disclosure
+# ("I'm scared.") is exactly the kind of cue this feature exists to catch. The turn still lands in
+# rolling context via observe(), so it remains visible to the next real semantic call regardless.
+TRIVIAL_ADVISER_TURN_MAX_WORDS = 2
+
 
 @dataclass(frozen=True)
 class TimedWord:
@@ -337,6 +344,7 @@ class CoachingSession:
         self._meeting_turns: list[dict[str, object]] = []
         self._meeting_events: list[DetectedEvent] = []
         self._meeting_nudges: list[LiveNudge] = []
+        self._skip_next_semantic = False
 
     def set_focus(self, values: list[str]) -> None:
         self.context.selected_focus = {
@@ -355,12 +363,16 @@ class CoachingSession:
         if nudge:
             self.context.nudges.append(nudge)
             self._meeting_nudges.append(nudge)
+        self._skip_next_semantic = (
+            observation.turn.get("speaker") == "advisor"
+            and len(observation.words) <= TRIVIAL_ADVISER_TURN_MAX_WORDS
+        )
         return nudge
 
     def schedule_semantic(
         self, on_nudge: Callable[[LiveNudge], Awaitable[None]]
     ) -> None:
-        if self.semantic_analyzer is None or self._closed:
+        if self.semantic_analyzer is None or self._closed or self._skip_next_semantic:
             return
         self._pending = self.context.snapshot()
         if self._worker is None or self._worker.done():

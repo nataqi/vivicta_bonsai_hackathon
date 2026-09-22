@@ -75,8 +75,11 @@ class SemanticAnalysisTests(unittest.TestCase):
         self.assertEqual(summary, "The customer shared a concern.")
         self.assertEqual(events[0].timestamp_ms, 4_000)
         self.assertEqual(completions.kwargs["model"], OPENROUTER_MODEL)
-        self.assertEqual(completions.kwargs["max_tokens"], 500)
-        self.assertEqual(completions.kwargs["extra_body"], {"provider": {"require_parameters": True}})
+        self.assertEqual(completions.kwargs["max_tokens"], 400)
+        self.assertEqual(
+            completions.kwargs["extra_body"],
+            {"provider": {"require_parameters": True, "sort": "latency"}},
+        )
         self.assertEqual(completions.kwargs["response_format"]["type"], "json_schema")
 
     def test_client_uses_openrouter_key_and_never_falls_back_to_openai(self) -> None:

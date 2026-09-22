@@ -23,4 +23,6 @@ def structured_response_format(schema: type[BaseModel]) -> dict[str, Any]:
     }
 
 
-OPENROUTER_STRUCTURED_PROVIDER = {"provider": {"require_parameters": True}}
+# require_parameters restricts routing to providers that support strict JSON-schema
+# structured output; sort=latency then picks the fastest of those for the live coaching path.
+OPENROUTER_STRUCTURED_PROVIDER = {"provider": {"require_parameters": True, "sort": "latency"}}
