@@ -88,6 +88,26 @@ class SpeakerTurnAssemblerTests(unittest.TestCase):
         self.assertEqual(turns[0]["durationMs"], 1000)
         self.assertTrue(turns[0]["isFinal"])
 
+    def test_preview_matches_pending_turn_and_id_carries_to_final_flush(self) -> None:
+        assembler = SpeakerTurnAssembler()
+
+        first = result([word("hello", 1.0, 1.4, 7, "Hello")])
+        self.assertEqual(assembler.consume(first), [])
+
+        preview = assembler.preview_observation()
+        self.assertIsNotNone(preview)
+        self.assertFalse(preview.turn["isFinal"])
+        self.assertEqual(preview.turn["text"], "Hello")
+        self.assertEqual(preview.turn["speaker"], "advisor")
+
+        second = result([word("there", 1.5, 2.0, 7, "there.")], speech_final=True)
+        turns = assembler.consume(second)
+
+        self.assertEqual(len(turns), 1)
+        self.assertTrue(turns[0]["isFinal"])
+        self.assertEqual(turns[0]["id"], preview.turn["id"])
+        self.assertIsNone(assembler.preview_observation())
+
     def test_splits_speaker_changes_and_keeps_mapping(self) -> None:
         assembler = SpeakerTurnAssembler()
         mixed = result(

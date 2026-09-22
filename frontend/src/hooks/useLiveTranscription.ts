@@ -68,7 +68,7 @@ function isSpeakerTurn(value: unknown): value is SpeakerTurn {
     typeof turn.startTimeMs === "number" &&
     typeof turn.endTimeMs === "number" &&
     typeof turn.durationMs === "number" &&
-    turn.isFinal === true
+    typeof turn.isFinal === "boolean"
   );
 }
 
@@ -304,9 +304,21 @@ export function useLiveTranscription() {
 
       if (message.type === "speaker_turn" && isSpeakerTurn(message.turn)) {
         if (!acceptSessionTurnsRef.current) return;
-        setSessionTurns((current) => [...current, message.turn]);
+        const incoming = message.turn;
+        const upsert = (current: SpeakerTurn[]) => {
+          const index = current.findIndex((turn) => turn.id === incoming.id);
+          if (index === -1) return [...current, incoming];
+          const next = current.slice();
+          next[index] = incoming;
+          return next;
+        };
+        // Provisional (not-yet-final) turns are shown live but only join the
+        // durable session record once finalized, to keep post-meeting data clean.
+        if (incoming.isFinal) {
+          setSessionTurns(upsert);
+        }
         if (acceptVisibleLiveContentRef.current) {
-          setTurns((current) => [...current, message.turn]);
+          setTurns(upsert);
         }
         return;
       }

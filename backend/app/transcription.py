@@ -33,6 +33,7 @@ class SpeakerTurnAssembler:
         self._words: list[_BufferedWord] = []
         self._advisor_label: int | None = None
         self._seen_labels: set[int] = set()
+        self._pending_id: str | None = None
 
     def consume(self, result: Any) -> list[dict[str, Any]]:
         return [observation.turn for observation in self.consume_observations(result)]
@@ -52,6 +53,9 @@ class SpeakerTurnAssembler:
                 if speaker is None:
                     speaker = self._words[-1].speaker if self._words else 0
 
+                if not self._words:
+                    self._pending_id = str(uuid4())
+
                 self._words.append(
                     _BufferedWord(
                         text=text,
@@ -65,6 +69,14 @@ class SpeakerTurnAssembler:
             return self.flush_observations()
         return []
 
+    def preview_observation(self) -> TurnObservation | None:
+        """The still-accumulating turn, for live display only (never fed to coaching)."""
+
+        if not self._words:
+            return None
+        groups = self._grouped_words()
+        return self._make_observation(groups[-1], turn_id=self._pending_id, is_final=False)
+
     def flush(self) -> list[dict[str, Any]]:
         return [observation.turn for observation in self.flush_observations()]
 
@@ -72,18 +84,35 @@ class SpeakerTurnAssembler:
         if not self._words:
             return []
 
+        groups = self._grouped_words()
+        last_index = len(groups) - 1
+        turns = [
+            self._make_observation(
+                group,
+                turn_id=self._pending_id if index == last_index else None,
+            )
+            for index, group in enumerate(groups)
+        ]
+        self._words = []
+        self._pending_id = None
+        return turns
+
+    def _grouped_words(self) -> list[list[_BufferedWord]]:
         groups: list[list[_BufferedWord]] = []
         for word in self._words:
             if not groups or groups[-1][-1].speaker != word.speaker:
                 groups.append([word])
             else:
                 groups[-1].append(word)
+        return groups
 
-        turns = [self._make_observation(group) for group in groups]
-        self._words = []
-        return turns
-
-    def _make_observation(self, words: list[_BufferedWord]) -> TurnObservation:
+    def _make_observation(
+        self,
+        words: list[_BufferedWord],
+        *,
+        turn_id: str | None = None,
+        is_final: bool = True,
+    ) -> TurnObservation:
         speaker_label = words[0].speaker
         if self._advisor_label is None:
             self._advisor_label = speaker_label
@@ -97,13 +126,13 @@ class SpeakerTurnAssembler:
         start_time_ms = round(words[0].start * 1000)
         end_time_ms = round(words[-1].end * 1000)
         turn = {
-            "id": str(uuid4()),
+            "id": turn_id or str(uuid4()),
             "speaker": "advisor" if speaker_label == self._advisor_label else "customer",
             "text": " ".join(word.text for word in words),
             "startTimeMs": start_time_ms,
             "endTimeMs": end_time_ms,
             "durationMs": max(0, end_time_ms - start_time_ms),
-            "isFinal": True,
+            "isFinal": is_final,
         }
         return TurnObservation(
             turn=turn,
@@ -227,8 +256,14 @@ async def transcription_websocket(websocket: WebSocket) -> None:
                     if not isinstance(result, ListenV1Results):
                         continue
 
-                    for observation in assembler.consume_observations(result):
-                        await emit_coached_observation(observation, coaching, send)
+                    flushed = assembler.consume_observations(result)
+                    if flushed:
+                        for observation in flushed:
+                            await emit_coached_observation(observation, coaching, send)
+                    else:
+                        preview = assembler.preview_observation()
+                        if preview:
+                            await send({"type": "speaker_turn", "turn": preview.turn})
 
                     if result.from_finalize:
                         finalized.set()
