@@ -89,7 +89,7 @@ high-confidence nudge threshold.
 Behavioral rules are MVP heuristics, not scientific measurements:
 
 - Pace uses recognized-word span: `>=175 WPM` is high confidence after at least
-  15 seconds, medium after 10 seconds, and `>=170 WPM` is low confidence.
+  3 seconds, medium after 2 seconds, and `>=170 WPM` is low confidence.
 - Adviser turns of 30 seconds or more produce long-monologue evidence; 45
   seconds is high confidence.
 - A response gap below 600 ms after a customer turn is supporting evidence.

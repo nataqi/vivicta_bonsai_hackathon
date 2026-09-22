@@ -75,18 +75,19 @@ class BehavioralAnalyzerTests(unittest.TestCase):
             for index in range(word_count)
         )
 
-    def test_fast_adviser_turn_just_under_seven_seconds_is_not_high_confidence(self) -> None:
-        words = self.fast_words(span_ms=6_999, word_count=21)
+    def test_fast_adviser_turn_just_under_three_seconds_is_medium_and_not_nudge_eligible(self) -> None:
+        words = self.fast_words(span_ms=2_999, word_count=9)
         events = BehavioralAnalyzer().analyze(
-            observation("advisor", 0, 6_999, turn_id="a1", words=words)
+            observation("advisor", 0, 2_999, turn_id="a1", words=words)
         )
         pace = next(item for item in events if item.type == EventType.FAST_PACE)
         self.assertEqual(pace.confidence, Confidence.MEDIUM)
+        self.assertIsNone(NudgeDecider().decide(events, set()))
 
-    def test_fast_adviser_turn_at_seven_seconds_is_high_confidence_and_maps_to_slow_down(self) -> None:
-        words = self.fast_words(span_ms=7_000, word_count=21)
+    def test_fast_adviser_turn_at_three_seconds_is_high_confidence_and_maps_to_slow_down(self) -> None:
+        words = self.fast_words(span_ms=3_000, word_count=9)
         events = BehavioralAnalyzer().analyze(
-            observation("advisor", 0, 7_000, turn_id="a1", words=words)
+            observation("advisor", 0, 3_000, turn_id="a1", words=words)
         )
         pace = next(item for item in events if item.type == EventType.FAST_PACE)
         self.assertEqual(pace.confidence, Confidence.HIGH)
@@ -94,10 +95,10 @@ class BehavioralAnalyzerTests(unittest.TestCase):
         self.assertIsNotNone(nudge)
         self.assertEqual(nudge.nudge_key, NudgeKey.PACE_SLOW_DOWN)
 
-    def test_slower_adviser_turn_at_seven_seconds_is_not_high_confidence(self) -> None:
-        words = self.fast_words(span_ms=7_000, word_count=20)
+    def test_slower_adviser_turn_is_not_high_confidence(self) -> None:
+        words = self.fast_words(span_ms=3_500, word_count=10)
         events = BehavioralAnalyzer().analyze(
-            observation("advisor", 0, 7_000, turn_id="a1", words=words)
+            observation("advisor", 0, 3_500, turn_id="a1", words=words)
         )
         pace = next(item for item in events if item.type == EventType.FAST_PACE)
         self.assertEqual(pace.confidence, Confidence.LOW)

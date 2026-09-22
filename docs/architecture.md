@@ -221,7 +221,7 @@ The exact thresholds can be tuned during testing rather than treated as scientif
 Initial MVP values may include:
 
 - sustained fast speech around 170–180+ words/minute
-- sustained fast pace for approximately 15–20 seconds before triggering
+- sustained fast pace for 3 seconds before triggering
 - repeated interruptions treated as stronger evidence than one possible interruption
 - very short pauses after significant customer statements treated as supporting evidence rather than an automatic failure
 
