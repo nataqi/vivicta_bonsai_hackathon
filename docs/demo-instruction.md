@@ -24,9 +24,70 @@ Structure is based on ppt from 2Hero "How to win the hackathon"
 
 
 
+## Transcript
+
+ADVISER — fast, around 185–195 WPM
+
+```
+Hello. Before we start, I want to quickly outline what we can cover today. We can look at what has changed, go through your questions, review the information you have, and decide what would be most useful to focus on first.
+```
+
+CUSTOMER
+
+```
+Okay. I brought my latest statement and some notes with me, and I mainly want to understand what we should look at first.
+```
+
+ADVISER — normal pace
+
+```
+Great. We can go through those together one step at a time.
+```
+
+CUSTOMER
+
+```
+I’m scared I could lose my home. I haven’t been sleeping.
+```
+
+ADVISER — deliberately misses the emotion
+
+```
+What is the balance on your mortgage?
+```
+
+CUSTOMER
+
+```
+I have the numbers here, but honestly it’s the uncertainty that is worrying me most.
+```
+
+ADVISER
+
+```
+That sounds really difficult. What part of the uncertainty feels hardest for you right now?
+```
+
+
+
+
+## Presentation Text 
+
+### Case
+Advisers are trained to handle financial questions, but some of the hardest customer conversations happen during stress, uncertainty, or major life changes. In those moments, how the adviser listens and responds matters just as much as the financial answer. The challenge is that compassion is hard to improve through one-off training alone. Advisers need gentle support in the moment, and feedback on real conversations while they’re still fresh.
+
+### Promise
+We focused on two of the hardest challenges to bringing this into production: latency and cognitive overload. Our goal is to show that the coach can stay fast enough to be useful by filtering before involving the LLM, and quiet enough not to overwhelm the adviser through a very minimal interface. Then we turn the same live conversation into focused coaching immediately afterwards.
+
+
+### Insights
+What we learned is that real-time coaching doesn’t mean sending everything to an LLM. Simple signals like speaking pace can be detected and filtered immediately, while the LLM is reserved for the moments that actually need context. And the coach only works if it stays out of the adviser’s way, so we use high-confidence triggers, cooldowns, and a minimal interface. The insight for us is that the challenge isn’t adding more AI — it’s deciding when AI should act, and when it should stay quiet.
+
+
+
+
+
 ## De-risking / Risks
-
-
 
 ### 1. Distraction during live coaching
 
@@ -82,48 +143,4 @@ Explicitly identify or enrol the adviser rather than relying on the first-speake
 
 **Status:**  
 Known and partially mitigated for the prototype; still an open production risk.
-
-## Transcript
-
-ADVISER — fast, around 185–195 WPM
-
-```
-Hello. Before we start, I want to quickly outline what we can cover today. We can look at what has changed, go through your questions, review the information you have, and decide what would be most useful to focus on first.
-```
-
-CUSTOMER
-
-```
-Okay. I brought my latest statement and some notes with me, and I mainly want to understand what we should look at first.
-```
-
-ADVISER — normal pace
-
-```
-Great. We can go through those together one step at a time.
-```
-
-CUSTOMER
-
-```
-I’m scared I could lose my home. I haven’t been sleeping.
-```
-
-ADVISER — deliberately misses the emotion
-
-```
-What is the balance on your mortgage?
-```
-
-CUSTOMER
-
-```
-I have the numbers here, but honestly it’s the uncertainty that is worrying me most.
-```
-
-ADVISER
-
-```
-That sounds really difficult. What part of the uncertainty feels hardest for you right now?
-```
 

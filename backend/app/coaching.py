@@ -162,9 +162,9 @@ class BehavioralAnalyzer:
             )
             if span_ms > 0:
                 wpm = len(observation.words) * 60_000 / span_ms
-                if wpm >= 175 and span_ms >= 7_000:
+                if wpm >= 175 and span_ms >= 3_000:
                     confidence = Confidence.HIGH
-                elif wpm >= 175 and span_ms >= 5_000:
+                elif wpm >= 175 and span_ms >= 2_000:
                     confidence = Confidence.MEDIUM
                 elif wpm >= 170:
                     confidence = Confidence.LOW
