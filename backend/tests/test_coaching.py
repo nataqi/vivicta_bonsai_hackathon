@@ -127,6 +127,22 @@ class BehavioralAnalyzerTests(unittest.TestCase):
         self.assertEqual(gap.confidence, Confidence.MEDIUM)
         self.assertIsNone(NudgeDecider().decide(events, set()))
 
+    def test_repeated_short_response_gaps_become_high_confidence_and_map_to_allow_pause(self) -> None:
+        analyzer = BehavioralAnalyzer()
+        analyzer.analyze(observation("customer", 0, 2_000, turn_id="c1"))
+        first = analyzer.analyze(observation("advisor", 2_300, 3_000, turn_id="a1"))
+        first_gap = next(item for item in first if item.type == EventType.SHORT_RESPONSE_GAP)
+        self.assertEqual(first_gap.confidence, Confidence.MEDIUM)
+        self.assertIsNone(NudgeDecider().decide(first, set()))
+
+        analyzer.analyze(observation("customer", 3_500, 5_000, turn_id="c2"))
+        second = analyzer.analyze(observation("advisor", 5_300, 6_000, turn_id="a2"))
+        second_gap = next(item for item in second if item.type == EventType.SHORT_RESPONSE_GAP)
+        self.assertEqual(second_gap.confidence, Confidence.HIGH)
+        nudge = NudgeDecider().decide(second, set())
+        self.assertIsNotNone(nudge)
+        self.assertEqual(nudge.nudge_key, NudgeKey.ALLOW_PAUSE)
+
     def test_repeated_clear_interruptions_become_high_confidence(self) -> None:
         analyzer = BehavioralAnalyzer()
         analyzer.analyze(observation("customer", 0, 2_000, turn_id="c1"))

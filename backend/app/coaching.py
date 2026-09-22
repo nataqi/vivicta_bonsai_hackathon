@@ -54,6 +54,7 @@ NUDGE_TEXT = {
 
 EVENT_NUDGES = {
     EventType.FAST_PACE: NudgeKey.PACE_SLOW_DOWN,
+    EventType.SHORT_RESPONSE_GAP: NudgeKey.ALLOW_PAUSE,
     EventType.INTERRUPTION_PATTERN: NudgeKey.DO_NOT_INTERRUPT,
     EventType.CLOSED_QUESTION_PATTERN: NudgeKey.ASK_OPEN_QUESTION,
     EventType.MISSED_EMOTIONAL_CUE: NudgeKey.ACKNOWLEDGE_EMOTION,
@@ -131,6 +132,7 @@ class BehavioralAnalyzer:
     def __init__(self) -> None:
         self._previous: TurnObservation | None = None
         self._interruptions: deque[int] = deque()
+        self._short_gaps: deque[int] = deque()
         self._talk_time: deque[tuple[int, int, str, int]] = deque()
 
     def analyze(self, observation: TurnObservation) -> list[DetectedEvent]:
@@ -208,11 +210,17 @@ class BehavioralAnalyzer:
         if previous and speaker == "advisor" and previous.turn["speaker"] == "customer":
             gap_ms = int(turn["startTimeMs"]) - int(previous.turn["endTimeMs"])
             if gap_ms < 600:
+                self._short_gaps.append(end_ms)
+                while (
+                    self._short_gaps
+                    and end_ms - self._short_gaps[0] > RELEVANCE_WINDOW_MS
+                ):
+                    self._short_gaps.popleft()
                 events.append(
                     DetectedEvent(
                         CoachingArea.PACE_AND_PAUSES,
                         EventType.SHORT_RESPONSE_GAP,
-                        Confidence.MEDIUM,
+                        Confidence.HIGH if len(self._short_gaps) >= 2 else Confidence.MEDIUM,
                         end_ms,
                         "The adviser responded with less than a 600 ms gap.",
                         (str(previous.turn["id"]), turn_id),
